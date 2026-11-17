@@ -6,7 +6,8 @@ from rest_framework.permissions import AllowAny,IsAuthenticated
 from utils.responses import success_response,error_response
 from rest_framework.exceptions import ValidationError
 from rest_framework import status
-
+from utils.otp import generate_otp_code, get_otp_expiry
+from django.utils import timezone
 
 class SendOTPView(APIView):
     permission_classes = [AllowAny]
@@ -22,8 +23,20 @@ class SendOTPView(APIView):
         channel = serializer.validated_data["channel"]
         purpose = serializer.validated_data["purpose"]
 
-        otp = OTPVerification.create_otp(target=target, channel=channel, purpose=purpose)
-        send_otp_notification(target=target, otp_code=otp.otp_code, channel=channel)
+        # Purge expired OTPs across the table + any previous OTPs for this target & purpose
+        OTPVerification.objects.filter(expires_at__lt=timezone.now()).delete()
+        OTPVerification.objects.filter(target=target, purpose=purpose).delete()
+
+        otp_code = generate_otp_code()
+        OTPVerification.objects.create(
+            target=target,
+            channel=channel,
+            purpose=purpose,
+            otp_code=otp_code,
+            expires_at=get_otp_expiry(minutes=10),
+        )
+
+        send_otp_notification(target=target, otp_code=otp_code, channel=channel)
 
         return success_response(
             data={"target": target, "channel": channel},
@@ -61,12 +74,13 @@ class VerifyOTPView(APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        otp_obj.is_used = True
-        otp_obj.save(update_fields=["is_used"])
+        channel = otp_obj.channel
+        # Delete the verified OTP immediately so the table stays clean
+        OTPVerification.objects.filter(target=target, purpose=purpose).delete()
 
         user = User.objects.filter(email=target).first() or User.objects.filter(phone=target).first()
         if user:
-            if otp_obj.channel == "EMAIL":
+            if channel == "EMAIL":
                 user.is_email_verified = True
             else:
                 user.is_phone_verified = True

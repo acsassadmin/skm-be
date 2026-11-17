@@ -70,18 +70,7 @@ class OTPVerification(models.Model):
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
 
-    @classmethod
-    def create_otp(cls, target: str, channel: str = "EMAIL", purpose: str = "REGISTER"):
-        # Invalidate older unused OTPs for the same target & purpose
-        cls.objects.filter(target=target, purpose=purpose, is_used=False).update(is_used=True)
-        code = f"{secrets.randbelow(1000000):06d}"
-        return cls.objects.create(
-            target=target,
-            channel=channel,
-            purpose=purpose,
-            otp_code=code,
-            expires_at=timezone.now() + timedelta(minutes=10),
-        )
+    
 
     def is_valid(self) -> bool:
         return not self.is_used and timezone.now() <= self.expires_at

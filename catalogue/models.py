@@ -1,0 +1,95 @@
+from django.db import models
+from django.utils.text import slugify
+
+
+class Category(models.Model):
+    name = models.CharField(max_length=120, unique=True)
+    slug = models.SlugField(max_length=140, unique=True, blank=True)
+    parent = models.ForeignKey(
+        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="subcategories"
+    )
+    description = models.TextField(blank=True)
+    image = models.ImageField(upload_to="categories/", blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name_plural = "Categories"
+        ordering = ["name"]
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return self.name
+
+
+class Product(models.Model):
+    category = models.ForeignKey(Category, on_delete=models.PROTECT, related_name="products")
+    name = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=220, unique=True, blank=True)
+    sku = models.CharField(max_length=60, unique=True, db_index=True)
+    hsn_code = models.CharField(max_length=20, blank=True)
+    brand = models.CharField(max_length=100, blank=True)
+
+    short_description = models.CharField(max_length=300, blank=True)
+    description = models.TextField()
+    specifications = models.JSONField(default=dict, blank=True)
+
+    # Dual Pricing (Section 3.8) & GST (Section 3.6)
+    customer_price = models.DecimalField(max_digits=10, decimal_places=2)
+    dealer_price = models.DecimalField(max_digits=10, decimal_places=2)
+    gst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=18.00)
+
+    # Inventory & Warranty (Sections 3.7 & 3.12)
+    stock_quantity = models.PositiveIntegerField(default=0)
+    low_stock_threshold = models.PositiveIntegerField(default=5)
+    warranty_months = models.PositiveIntegerField(default=12)
+
+    is_featured = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            base_slug = slugify(self.name)
+            self.slug = f"{base_slug}-{self.sku.lower()}"
+        super().save(*args, **kwargs)
+
+    @property
+    def in_stock(self) -> bool:
+        return self.stock_quantity > 0
+
+    def __str__(self):
+        return f"{self.name} ({self.sku})"
+
+
+class ProductImage(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="images")
+    image = models.ImageField(upload_to="products/images/")
+    alt_text = models.CharField(max_length=150, blank=True)
+    is_primary = models.BooleanField(default=False)
+    display_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-is_primary", "display_order", "id"]
+
+    def save(self, *args, **kwargs):
+        if self.is_primary:
+            ProductImage.objects.filter(product=self.product, is_primary=True).exclude(pk=self.pk).update(is_primary=False)
+        super().save(*args, **kwargs)
+
+
+class ProductVideo(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="videos")
+    title = models.CharField(max_length=150)
+    video_url = models.URLField(blank=True)
+    video_file = models.FileField(upload_to="products/videos/", blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)

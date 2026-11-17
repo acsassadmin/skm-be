@@ -37,7 +37,8 @@ INSTALLED_APPS = [
     "drf_spectacular",
     #apps
     "core",
-    "accounts"
+    "accounts",
+    "catalogue"
 ]
 
 MIDDLEWARE = [
@@ -165,10 +166,10 @@ USE_TZ = True
 STATIC_URL = 'static/'
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
-EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_BACKEND = 'utils.email_backend.Python312EmailBackend'
 
 EMAIL_HOST = os.getenv('EMAIL_HOST', default='smtp.gmail.com')
-EMAIL_PORT = os.getenv('EMAIL_PORT', default=587)  
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', default=587))
 
 EMAIL_USE_TLS = True
 EMAIL_USE_SSL = False
