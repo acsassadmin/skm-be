@@ -140,8 +140,11 @@ class EnquiryAPIView(APIView):
         enquiries = apply_search_and_filters(
             queryset=enquiries,
             request=request,
-            search_fields=['full_name','email_address','phone_number','company_name'],
-            filter_fields={'referral':'how_did_you_hear_about_us'}
+            search_fields=['full_name', 'email_address', 'phone_number', 'company_name', 'message'],
+            filter_fields={
+                'referral': 'how_did_you_hear_about_us',
+                'subject': 'subject',
+            }
         )
         serializer = EnquirySerializer(enquiries, many=True)
         return success_response(
