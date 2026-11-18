@@ -139,9 +139,6 @@ class ProductView(APIView):
         )
 
     def post(self, request):
-        if not is_admin_user(request.user):
-            return error_response(message="Admin privileges required.", status_code=status.HTTP_403_FORBIDDEN)
-
         serializer = ProductSerializer(data=request.data, context={"request": request})
         try:
             serializer.is_valid(raise_exception=True)
