@@ -104,6 +104,15 @@ wheels = [
 ]
 
 [[package]]
+name = "et-xmlfile"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz", hash = "sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54", size = 17234, upload-time = "2024-10-25T17:25:40.039Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl", hash = "sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa", size = 18059, upload-time = "2024-10-25T17:25:39.051Z" },
+]
+
+[[package]]
 name = "inflection"
 version = "0.5.1"
 source = { registry = "https://pypi.org/simple" }
@@ -157,6 +166,27 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/9d/5b/933c030901a22cdb241ba95901d00bd298f968d6d1f27b7ee45fc3fc24bd/mysqlclient-2.3.1-cp315-cp315-win_arm64.whl", hash = "sha256:891148327eda166abb6d9cfcc5f35a8e2ab81804b8836f070d1e126df1e522b8", size = 217377, upload-time = "2026-11-10T10:02:12.741Z" },
     { url = "https://files.pythonhosted.org/packages/74/c9/2fbb3318559e0b89f6809755434806159a33335517129b11365efb17b881/mysqlclient-2.3.1-cp315-cp315t-win_amd64.whl", hash = "sha256:7aee4e672f973879b53efb53d705b7efca7efd64bfe8500c5d294902e0033ab0", size = 223127, upload-time = "2026-11-10T10:02:14.264Z" },
     { url = "https://files.pythonhosted.org/packages/43/31/e0aa2078ee31c44a8cab176dde84abcd00f2cc8aedb381b2d032d35edf25/mysqlclient-2.3.1-cp315-cp315t-win_arm64.whl", hash = "sha256:0d1599dc27d006208291080bab35d0f82cbe6ba23587def7c8ed7daffaed0fe8", size = 217946, upload-time = "2026-11-10T10:02:15.628Z" },
+]
+
+[[package]]
+name = "openpyxl"
+version = "3.1.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "et-xmlfile" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz", hash = "sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050", size = 186464, upload-time = "2024-06-28T14:03:44.161Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl", hash = "sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2", size = 250910, upload-time = "2024-06-28T14:03:41.161Z" },
+]
+
+[[package]]
+name = "pdfkit"
+version = "1.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/58/bb/6ddc62b4622776a6514fd749041c2b4bccd343e006d00de590f8090ac8b1/pdfkit-1.0.0.tar.gz", hash = "sha256:992f821e1e18fc8a0e701ecae24b51a2d598296a180caee0a24c0af181da02a9", size = 13288, upload-time = "2021-11-14T19:28:51.672Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/1b/26c080096dd93936dccfd32c682bed3d5630a84aae9d493ff68afb2ae0fb/pdfkit-1.0.0-py3-none-any.whl", hash = "sha256:a7a4ca0d978e44fa8310c4909f087052430a6e8e0b1dd7ceef657f139789f96f", size = 12099, upload-time = "2021-11-14T19:28:50.44Z" },
 ]
 
 [[package]]
@@ -451,6 +481,8 @@ dependencies = [
     { name = "djangorestframework-simplejwt" },
     { name = "drf-spectacular" },
     { name = "mysqlclient" },
+    { name = "openpyxl" },
+    { name = "pdfkit" },
     { name = "pillow" },
     { name = "pymysql" },
     { name = "python-dotenv" },
@@ -465,6 +497,8 @@ requires-dist = [
     { name = "djangorestframework-simplejwt", specifier = "<5.4" },
     { name = "drf-spectacular", specifier = "<0.28" },
     { name = "mysqlclient", specifier = ">=2.3.1" },
+    { name = "openpyxl", specifier = ">=3.1.5" },
+    { name = "pdfkit", specifier = ">=1.0.0" },
     { name = "pillow", specifier = ">=13.0.0" },
     { name = "pymysql", specifier = ">=1.2.4" },
     { name = "python-dotenv", specifier = ">=1.2.4" },

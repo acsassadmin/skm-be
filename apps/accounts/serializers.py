@@ -1,7 +1,7 @@
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Role, OTPVerification
+from .models import *
 
 User = get_user_model()
 
@@ -11,7 +11,36 @@ class RoleSerializer(serializers.ModelSerializer):
         model = Role
         fields = ["id", "name", "code", "description", "requires_approval", "is_active", "created_at"]
         read_only_fields = ["id", "created_at"]
+class ModuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Module
+        fields = ["id", "name", "navigate_route", "is_active"]
+        read_only_fields = ["id"]
 
+
+class RoleModulePermissionSerializer(serializers.ModelSerializer):
+    role_name = serializers.CharField(source="role.name", read_only=True)
+    role_code = serializers.CharField(source="role.code", read_only=True)
+    module_name = serializers.CharField(source="module.name", read_only=True)
+    navigate_route = serializers.CharField(source="module.navigate_route", read_only=True)
+
+    class Meta:
+        model = RoleModulePermission
+        fields = [
+            "id",
+            "role",
+            "role_name",
+            "role_code",
+            "module",
+            "module_name",
+            "navigate_route",
+            "is_view",
+            "is_upload",
+            "is_update",
+            "is_delete",
+            "is_download",
+        ]
+        read_only_fields = ["id", "role_name", "role_code", "module_name", "navigate_route"]
 
 class UserSerializer(serializers.ModelSerializer):
     role_details = RoleSerializer(source="roles", many=True, read_only=True)
@@ -30,6 +59,7 @@ class UserSerializer(serializers.ModelSerializer):
             "is_phone_verified",
             "is_approved",
             "is_active",
+            "is_superuser",
             "date_joined",
         ]
         read_only_fields = ["id", "date_joined", "is_email_verified", "is_phone_verified"]
