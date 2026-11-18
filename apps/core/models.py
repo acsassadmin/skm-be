@@ -24,6 +24,15 @@ class Enquiry(models.Model):
         ('other', 'Other'),
     ]
 
+    SUBJECT_CHOICES = [
+        ('product_enquiry', 'Product enquiry'),
+        ('custom_engineering_project', 'Custom engineering project'),
+        ('training_internship', 'Training / internship'),
+        ('institutional_collaboration', 'Institutional collaboration'),
+        ('service_maintenance', 'Service & maintenance'),
+        ('other', 'Other'),
+    ]
+
     full_name = models.CharField(max_length=150)
     email_address = models.EmailField()
     phone_number = models.CharField(max_length=20)
@@ -32,7 +41,10 @@ class Enquiry(models.Model):
         blank=True, 
         help_text="Optional: Company or Organization Name"
     )
-    subject = models.CharField(max_length=200)
+    subject = models.CharField(
+        max_length=100,
+        choices=SUBJECT_CHOICES,
+    )
     message = models.TextField()
     how_did_you_hear_about_us = models.CharField(
         max_length=50,
