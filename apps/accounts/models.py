@@ -24,7 +24,30 @@ class Role(models.Model):
     def __str__(self):
         return f"{self.name} ({self.code})"
 
+class Module(models.Model):
+    name=models.CharField(max_length=100)
+    navigate_route=models.CharField(max_length=150,null=True,blank=True)
+    is_active = models.BooleanField(default=True)
+    
+    def __str__(self):
+        return f"{self.name}-{self.navigate_route}"
+    
+class RoleModulePermission(models.Model):
+    
+    role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name="module_permissions")
+    module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name="role_permissions")
 
+    is_view = models.BooleanField(default=True)
+    is_upload = models.BooleanField(default=False)    
+    is_update = models.BooleanField(default=False)    
+    is_delete = models.BooleanField(default=False)
+    is_download = models.BooleanField(default=False)  
+
+    class Meta:
+        unique_together = ("role", "module")
+
+    def __str__(self):
+        return f"{self.role.code} -> {self.module.name}"
 class User(AbstractUser):
     email = models.EmailField(unique=True)
     phone = models.CharField(max_length=15, blank=True, db_index=True)

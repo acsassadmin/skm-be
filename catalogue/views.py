@@ -13,8 +13,9 @@ from .serializers import (
     ProductSerializer,
     ProductVideoSerializer,
 )
-
-
+from catalogue.services.excel_service import import_products_from_excel,export_products_from_db,generate_product_import_template
+from django.http import HttpResponse
+from utils.pagination import StandardPagination
 def is_admin_user(user) -> bool:
     return bool(user and user.is_authenticated and (user.is_superuser or user.has_role("ADMIN")))
 
@@ -89,6 +90,7 @@ class CategoryView(APIView):
 
 
 class ProductView(APIView):
+    pagination_class=StandardPagination
     def get_permissions(self):
         if self.request.method == "GET":
             return [AllowAny()]
@@ -97,7 +99,12 @@ class ProductView(APIView):
     def get(self, request):
         product_id = request.query_params.get("id")
         if product_id:
-            product = Product.objects.select_related("category").prefetch_related("images", "videos").filter(id=product_id).first()
+            product = (
+                Product.objects.select_related("category")
+                .prefetch_related("images", "videos")
+                .filter(id=product_id)
+                .first()
+            )
             if not product:
                 return error_response(message="Product not found.", status_code=status.HTTP_404_NOT_FOUND)
             return success_response(data=ProductSerializer(product, context={"request": request}).data)
@@ -124,8 +131,12 @@ class ProductView(APIView):
                 | Q(description__icontains=search)
             )
 
-        serializer = ProductSerializer(queryset, many=True, context={"request": request})
-        return success_response(data=serializer.data)
+        paginator = self.pagination_class()
+        paginated_queryset = paginator.paginate_queryset(queryset, request, view=self)
+        serializer = ProductSerializer(paginated_queryset, many=True, context={"request": request})
+        return paginator.get_paginated_response(
+            serializer.data, message="Products retrieved successfully."
+        )
 
     def post(self, request):
         if not is_admin_user(request.user):
@@ -183,7 +194,7 @@ class ProductImageView(APIView):
         if not is_admin_user(request.user):
             return error_response(message="Admin privileges required.", status_code=status.HTTP_403_FORBIDDEN)
 
-        serializer = ProductImageSerializer(data=request.data)
+        serializer = ProductImageSerializer(data=request.data,context={"request":request})
         try:
             serializer.is_valid(raise_exception=True)
         except ValidationError as e:
@@ -241,3 +252,80 @@ class ProductVideoView(APIView):
 
         video.delete()
         return success_response(message="Product video deleted successfully.")
+
+class ProductExcelImportView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get(self, request):
+        """Download sample Excel template + guidance tab before uploading."""
+        if not is_admin_user(request.user):
+            return error_response(message="Admin privileges required.", status_code=status.HTTP_403_FORBIDDEN)
+
+        excel_stream = generate_product_import_template()
+        response = HttpResponse(
+            excel_stream.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = 'attachment; filename="skm_product_import_template.xlsx"'
+        return response
+
+    def post(self, request):
+        """Bulk import/update products from uploaded .xlsx file."""
+        if not is_admin_user(request.user):
+            return error_response(message="Admin privileges required.", status_code=status.HTTP_403_FORBIDDEN)
+
+        excel_file = request.FILES.get("file")
+        if not excel_file:
+            return error_response(
+                errors={"file": "Please upload an .xlsx Excel file under the 'file' key."},
+                message="No file uploaded.",
+            )
+
+        if not excel_file.name.lower().endswith(".xlsx"):
+            return error_response(
+                errors={"file": "Only .xlsx Excel files are supported."},
+                message="Invalid file format.",
+            )
+
+        try:
+            summary = import_products_from_excel(excel_file)
+        except Exception as exc:
+            return error_response(
+                errors={"file": str(exc)},
+                message="Failed to process Excel file.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return success_response(
+            data=summary,
+            message=f"Import complete: {summary['created']} created, {summary['updated']} updated, {summary['failed']} failed.",
+            status_code=status.HTTP_200_OK,
+        )
+
+
+class ProductExcelExportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Export live products from the database into an .xlsx file."""
+        if not is_admin_user(request.user):
+            return error_response(message="Admin privileges required.", status_code=status.HTTP_403_FORBIDDEN)
+
+        queryset = Product.objects.select_related("category").all()
+
+        category_id = request.query_params.get("category")
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+
+        is_active = request.query_params.get("is_active")
+        if is_active in {"true", "false"}:
+            queryset = queryset.filter(is_active=(is_active == "true"))
+
+        excel_stream = export_products_from_db(queryset=queryset)
+        response = HttpResponse(
+            excel_stream.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = 'attachment; filename="skm_products_export.xlsx"'
+        return response

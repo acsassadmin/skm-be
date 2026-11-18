@@ -11,4 +11,7 @@ urlpatterns = [
     path("users/", UserView.as_view(), name="users"),
     path("send-otp/", SendOTPView.as_view(), name="send-otp"),
     path("verify-otp/", VerifyOTPView.as_view(), name="verify-otp"),
+    path("permissions/", UserPermissionsAPIView.as_view(), name="user-permissions"),
+    path("role-permissions/", RoleModulePermissionAPIView.as_view(), name="role-module-permissions"),
+    path("modules/", ModuleAPIView.as_view(), name="modules"),
 ]
