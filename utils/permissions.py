@@ -1,5 +1,5 @@
 from rest_framework.permissions import BasePermission
-from apps.accounts.models import RoleModulePermission
+from accounts.models import RoleModulePermission
 
 
 class HasModulePermission(BasePermission):
