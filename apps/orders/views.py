@@ -6,9 +6,20 @@ from rest_framework.views import APIView
 
 # from utils.permissions import HasModulePermission
 from orders.models import Coupon
-from orders.serializers import CouponSerializer
+from orders.serializers import CouponSerializer,OrderItemSerializer, OrderSerializer
 from utils.pagination import StandardPagination
 from utils.responses import error_response, success_response
+from .utils.ordercalculation import *
+from utils.filters import *
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from catalogue.models import Product
+from .models import Cart, CartItem, Coupon
+from .serializers import (
+    CartSerializer,
+    CartAddItemSerializer,
+    CartUpdateSerializer,
+)
 
 
 def is_orders_staff(user) -> bool:
@@ -124,21 +135,6 @@ class CouponValidateView(APIView):
             },
             message="Coupon applied successfully.",
         )
-
-from django.utils import timezone
-from rest_framework import status
-from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.views import APIView
-
-from catalogue.models import Product
-from utils.responses import success_response, error_response
-from .models import Cart, CartItem, Coupon
-from .serializers import (
-    CartSerializer,
-    CartAddItemSerializer,
-    CartUpdateSerializer,
-)
 
 
 class CartView(APIView):
@@ -324,4 +320,329 @@ class CartView(APIView):
         return success_response(
             data=serializer.data,
             message=msg,
+        )
+
+
+class OrderView(APIView):
+    """
+    GET:    ?id=<order_id> for single order, or list with ?search=&status=&payment_status=&start_date=&end_date=&page=&size=
+    POST:   Create an order from the user's cart
+    PUT:    Update an order via ?id=<order_id> (or body["id"])
+    DELETE: Delete an order via ?id=<order_id> (or body["id"])
+    """
+
+    permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
+
+    def _base_queryset(self, request):
+        qs = Order.objects.prefetch_related("items", "items__product").order_by("-created_at")
+        if request.user.is_staff or request.user.is_superuser:
+            return qs
+        return qs.filter(user=request.user)
+
+    def _get_target_id(self, request):
+        return request.query_params.get("id") or request.data.get("id")
+
+    def get(self, request):
+        qs = self._base_queryset(request)
+        order_id = request.query_params.get("id")
+
+        if order_id:
+            order = get_object_or_404(qs, pk=order_id)
+            serializer = OrderSerializer(order, context={"request": request})
+            return success_response(
+                data=serializer.data,
+                message="Order retrieved successfully",
+                status_code=status.HTTP_200_OK,
+            )
+
+        filtered_qs = apply_search_and_filters(
+            qs,
+            request,
+            search_fields=[
+                "order_number",
+                "coupon_code",
+                "shipping_full_name",
+                "shipping_phone",
+                "shipping_city",
+            ],
+            filter_fields={
+                "status": "status",
+                "payment_status": "payment_status",
+                "is_dealer_order": "is_dealer_order",
+                "coupon_code": "coupon_code",
+            },
+        )
+
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(filtered_qs, request, view=self)
+        serializer = OrderSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(
+            serializer.data, message="Orders retrieved successfully"
+        )
+
+    def post(self, request):
+        cart = get_object_or_404(Cart, user=request.user)
+        shipping_amount = Decimal(str(request.data.get("shipping_amount", "0.00")))
+
+        try:
+            order = create_order_from_cart(
+                user=request.user,
+                cart=cart,
+                shipping_data=request.data,
+                shipping_amount=shipping_amount,
+            )
+        except (ValueError, KeyError) as exc:
+            return error_response(
+                errors={"detail": str(exc)},
+                message=str(exc),
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = OrderSerializer(order, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message="Order created successfully",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    def put(self, request):
+        order_id = self._get_target_id(request)
+        if not order_id:
+            return error_response(
+                errors={"id": ["This field is required."]},
+                message="Query param 'id' is required.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        order = get_object_or_404(self._base_queryset(request), pk=order_id)
+        serializer = OrderSerializer(
+            order, data=request.data, partial=True, context={"request": request}
+        )
+        if not serializer.is_valid():
+            return error_response(
+                errors=serializer.errors,
+                message="Validation failed",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer.save()
+        shipping_override = (
+            Decimal(str(request.data["shipping_amount"]))
+            if "shipping_amount" in request.data and request.data["shipping_amount"] is not None
+            else None
+        )
+        recalculate_order_totals(order, shipping_amount=shipping_override)
+
+        return success_response(
+            data=OrderSerializer(order, context={"request": request}).data,
+            message="Order updated successfully",
+            status_code=status.HTTP_200_OK,
+        )
+
+    def delete(self, request):
+        order_id = self._get_target_id(request)
+        if not order_id:
+            return error_response(
+                errors={"id": ["This field is required."]},
+                message="Query param 'id' is required.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        order = get_object_or_404(self._base_queryset(request), pk=order_id)
+        order.delete()
+        return success_response(
+            data={},
+            message="Order deleted successfully",
+            status_code=status.HTTP_200_OK,
+        )
+
+
+class OrderItemView(APIView):
+    """
+    GET:    ?id=<item_id> for single item, or list with ?order_id=&search=&start_date=&end_date=&page=&size=
+    POST:   Add/set an order item using ?order_id=<order_id> (or body["order"])
+    PUT:    Update an order item via ?id=<item_id> (or body["id"])
+    DELETE: Delete an order item via ?id=<item_id> (or body["id"])
+    """
+
+    permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
+
+    def _base_queryset(self, request):
+        qs = OrderItem.objects.select_related("order", "product").order_by("id")
+        if request.user.is_staff or request.user.is_superuser:
+            return qs
+        return qs.filter(order__user=request.user)
+
+    def _get_order(self, request, order_id):
+        qs = Order.objects.all()
+        if not (request.user.is_staff or request.user.is_superuser):
+            qs = qs.filter(user=request.user)
+        return get_object_or_404(qs, pk=order_id)
+
+    def _get_target_id(self, request):
+        return request.query_params.get("id") or request.data.get("id")
+
+    def get(self, request):
+        qs = self._base_queryset(request)
+        item_id = request.query_params.get("id")
+
+        if item_id:
+            item = get_object_or_404(qs, pk=item_id)
+            serializer = OrderItemSerializer(item, context={"request": request})
+            return success_response(
+                data=serializer.data,
+                message="Order item retrieved successfully",
+                status_code=status.HTTP_200_OK,
+            )
+
+        filtered_qs = apply_search_and_filters(
+            qs,
+            request,
+            search_fields=["product_name", "product_sku", "hsn_code", "order__order_number"],
+            filter_fields={
+                "order_id": "order_id",
+                "product_id": "product_id",
+            },
+        )
+
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(filtered_qs, request, view=self)
+        serializer = OrderItemSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(
+            serializer.data, message="Order items retrieved successfully"
+        )
+
+    def post(self, request):
+        order_id = request.query_params.get("order_id") or request.data.get("order")
+        if not order_id:
+            return error_response(
+                errors={"order_id": ["This field is required."]},
+                message="Query param 'order_id' is required.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        order = self._get_order(request, order_id)
+        product_id = request.data.get("product") or request.data.get("product_id")
+        product = get_object_or_404(Product, pk=product_id)
+        quantity = int(request.data.get("quantity", 1))
+
+        try:
+            item = add_or_update_order_item(order=order, product=product, quantity=quantity)
+        except ValueError as exc:
+            return error_response(
+                errors={"detail": str(exc)},
+                message=str(exc),
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = OrderItemSerializer(item, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message="Order item saved successfully",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    def put(self, request):
+        item_id = self._get_target_id(request)
+        if not item_id:
+            return error_response(
+                errors={"id": ["This field is required."]},
+                message="Query param 'id' is required.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        item = get_object_or_404(self._base_queryset(request), pk=item_id)
+        quantity = int(request.data.get("quantity", item.quantity))
+
+        try:
+            updated_item = add_or_update_order_item(
+                order=item.order,
+                product=item.product,
+                quantity=quantity,
+            )
+        except ValueError as exc:
+            return error_response(
+                errors={"detail": str(exc)},
+                message=str(exc),
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = OrderItemSerializer(updated_item, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message="Order item updated successfully",
+            status_code=status.HTTP_200_OK,
+        )
+
+    def delete(self, request):
+        item_id = self._get_target_id(request)
+        if not item_id:
+            return error_response(
+                errors={"id": ["This field is required."]},
+                message="Query param 'id' is required.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        item = get_object_or_404(self._base_queryset(request), pk=item_id)
+        delete_order_item(item)
+        return success_response(
+            data={},
+            message="Order item deleted successfully",
+            status_code=status.HTTP_200_OK,
+        )
+
+class OrderHistoryView(APIView):
+    """
+    GET: Retrieve order history for the logged-in user.
+         - Single order: ?id=<order_id>
+         - Paginated list: ?search=&status=&payment_status=&is_dealer_order=&coupon_code=&start_date=&end_date=&page=&size=
+    """
+
+    permission_classes = [IsAuthenticated]
+    pagination_class = StandardPagination
+
+    def get(self, request):
+        qs = (
+            Order.objects.filter(user=request.user)
+            .prefetch_related("items", "items__product")
+            .order_by("-created_at")
+        )
+
+        order_id = request.query_params.get("id")
+        if order_id:
+            order = get_object_or_404(qs, pk=order_id)
+            serializer = OrderSerializer(order, context={"request": request})
+            return success_response(
+                data=serializer.data,
+                message="Order history detail retrieved successfully",
+                status_code=status.HTTP_200_OK,
+            )
+
+        filtered_qs = apply_search_and_filters(
+            qs,
+            request,
+            search_fields=[
+                "order_number",
+                "coupon_code",
+                "shipping_full_name",
+                "shipping_phone",
+                "shipping_city",
+                "items__product_name",
+                "items__product_sku",
+            ],
+            filter_fields={
+                "status": "status",
+                "payment_status": "payment_status",
+                "is_dealer_order": "is_dealer_order",
+                "coupon_code": "coupon_code",
+            },
+        ).distinct()
+
+        paginator = self.pagination_class()
+        page = paginator.paginate_queryset(filtered_qs, request, view=self)
+        serializer = OrderSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(
+            serializer.data, message="Order history retrieved successfully"
         )

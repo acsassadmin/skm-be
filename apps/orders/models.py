@@ -4,6 +4,7 @@ from django.db import models
 from django.utils import timezone
 from django.conf import settings
 from catalogue.models import  Product
+import uuid
 
 
 class Coupon(models.Model):
@@ -121,3 +122,106 @@ class CartItem(models.Model):
         if is_dealer and self.product.dealer_price is not None:
             return Decimal(self.product.dealer_price)
         return Decimal(self.product.customer_price)
+
+class Order(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        CONFIRMED = "CONFIRMED", "Confirmed"
+        PROCESSING = "PROCESSING", "Processing"
+        SHIPPED = "SHIPPED", "Shipped"
+        DELIVERED = "DELIVERED", "Delivered"
+        CANCELLED = "CANCELLED", "Cancelled"
+        REFUNDED = "REFUNDED", "Refunded"
+
+    class PaymentStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        PAID = "PAID", "Paid"
+        FAILED = "FAILED", "Failed"
+        REFUNDED = "REFUNDED", "Refunded"
+
+    order_number = models.CharField(max_length=32, unique=True, db_index=True, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="orders",
+    )
+    coupon = models.ForeignKey(
+        "orders.Coupon",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="orders",
+    )
+    coupon_code = models.CharField(max_length=50, blank=True)
+
+    is_dealer_order = models.BooleanField(default=False)
+
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+    payment_status = models.CharField(
+        max_length=20, choices=PaymentStatus.choices, default=PaymentStatus.PENDING, db_index=True
+    )
+
+    subtotal_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    shipping_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    shipping_full_name = models.CharField(max_length=150)
+    shipping_phone = models.CharField(max_length=15)
+    shipping_address = models.TextField()
+    shipping_city = models.CharField(max_length=100)
+    shipping_state = models.CharField(max_length=100)
+    shipping_pincode = models.CharField(max_length=15)
+    notes = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "orders_order"
+        ordering = ["-created_at"]
+
+    def save(self, *args, **kwargs):
+        if not self.order_number:
+            date_str = timezone.now().strftime("%Y%m%d")
+            suffix = uuid.uuid4().hex[:6].upper()
+            self.order_number = f"ORD-{date_str}-{suffix}"
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.order_number} ({self.user.email})"
+
+
+class OrderItem(models.Model):
+    """Line items in an order (order list)."""
+
+    order = models.ForeignKey(
+        Order,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="order_items",
+    )
+    product_name = models.CharField(max_length=200)
+    product_sku = models.CharField(max_length=60)
+    hsn_code = models.CharField(max_length=20, blank=True)
+
+    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+    gst_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal("18.00"))
+    tax_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    line_subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+    line_total = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
+
+    class Meta:
+        db_table = "orders_order_item"
+        unique_together = ("order", "product")
+
+    def __str__(self):
+        return f"{self.product_name} x {self.quantity} ({self.order.order_number})"

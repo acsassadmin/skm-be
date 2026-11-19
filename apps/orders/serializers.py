@@ -1,7 +1,7 @@
 from decimal import Decimal, ROUND_HALF_UP
 from rest_framework import serializers
 from catalogue.models import Product
-from .models import Cart, CartItem, Coupon
+from .models import Cart, CartItem, Coupon, Order, OrderItem
 from .services.cart_service import is_user_dealer, calculate_coupon_discount
 
 
@@ -197,3 +197,29 @@ class CartUpdateSerializer(serializers.Serializer):
     item_id = serializers.IntegerField(required=False)
     quantity = serializers.IntegerField(min_value=0, required=False)
     coupon_code = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+class OrderItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderItem
+        fields = "__all__"
+        read_only_fields = ["id", "order"]
+
+
+class OrderSerializer(serializers.ModelSerializer):
+    items = OrderItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Order
+        fields = "__all__"
+        read_only_fields = [
+            "id",
+            "order_number",
+            "user",
+            "subtotal_amount",
+            "discount_amount",
+            "tax_amount",
+            "shipping_amount",
+            "total_amount",
+            "created_at",
+            "updated_at",
+        ]
