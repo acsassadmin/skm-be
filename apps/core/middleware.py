@@ -31,6 +31,7 @@ class JWTMiddleware(MiddlewareMixin):
             '/api/redoc/',
             '/api/core/contact/',
             '/api/core/enquiry/',
+            '/api/catalogue/products/'
             
             
            

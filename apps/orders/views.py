@@ -124,3 +124,204 @@ class CouponValidateView(APIView):
             },
             message="Coupon applied successfully.",
         )
+
+from django.utils import timezone
+from rest_framework import status
+from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+
+from catalogue.models import Product
+from utils.responses import success_response, error_response
+from .models import Cart, CartItem, Coupon
+from .serializers import (
+    CartSerializer,
+    CartAddItemSerializer,
+    CartUpdateSerializer,
+)
+
+
+class CartView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_or_create_cart(self, user):
+        cart, _ = Cart.objects.get_or_create(user=user)
+        return cart
+
+    def get(self, request):
+        cart = self._get_or_create_cart(request.user)
+        serializer = CartSerializer(cart, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message="Cart fetched successfully.",
+        )
+
+    def post(self, request):
+        """
+        Add a product to the cart or increment its quantity.
+        Body: { "product_id": 1, "quantity": 2 }
+        """
+        try:
+            input_serializer = CartAddItemSerializer(data=request.data)
+            input_serializer.is_valid(raise_exception=True)
+        except ValidationError as e:
+            return error_response(errors=e.detail, message="Validation failed.")
+
+        product_id = input_serializer.validated_data["product_id"]
+        quantity = input_serializer.validated_data["quantity"]
+
+        product = Product.objects.filter(id=product_id, is_active=True).first()
+        if not product:
+            return error_response(
+                errors={"product_id": ["Active product not found."]},
+                message="Product not found.",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        cart = self._get_or_create_cart(request.user)
+        cart_item, created = CartItem.objects.get_or_create(
+            cart=cart,
+            product=product,
+            defaults={"quantity": quantity},
+        )
+
+        new_quantity = quantity if created else cart_item.quantity + quantity
+        if new_quantity > product.stock_quantity:
+            if created:
+                cart_item.delete()
+            return error_response(
+                errors={
+                    "quantity": [
+                        f"Only {product.stock_quantity} unit(s) available in stock."
+                    ]
+                },
+                message="Insufficient stock.",
+            )
+
+        if not created:
+            cart_item.quantity = new_quantity
+            cart_item.save(update_fields=["quantity", "updated_at"])
+
+        serializer = CartSerializer(cart, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message="Item added to cart.",
+            status_code=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
+
+    def put(self, request):
+        """
+        Update an item's quantity (quantity=0 removes it) and/or apply/remove a coupon.
+        Supports ?id=<cart_item_id> or item_id in request body.
+        """
+        try:
+            input_serializer = CartUpdateSerializer(data=request.data)
+            input_serializer.is_valid(raise_exception=True)
+        except ValidationError as e:
+            return error_response(errors=e.detail, message="Validation failed.")
+
+        cart = self._get_or_create_cart(request.user)
+        data = input_serializer.validated_data
+
+        # 1. Handle item quantity update if provided
+        item_id = request.query_params.get("id") or data.get("item_id")
+        if item_id is not None:
+            cart_item = CartItem.objects.filter(id=item_id, cart=cart).select_related("product").first()
+            if not cart_item:
+                return error_response(
+                    errors={"id": ["Cart item not found."]},
+                    message="Cart item not found.",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                )
+
+            quantity = data.get("quantity")
+            if quantity is None:
+                return error_response(
+                    errors={"quantity": ["Quantity is required when updating an item."]},
+                    message="Validation failed.",
+                )
+
+            if quantity == 0:
+                cart_item.delete()
+            else:
+                if quantity > cart_item.product.stock_quantity:
+                    return error_response(
+                        errors={
+                            "quantity": [
+                                f"Only {cart_item.product.stock_quantity} unit(s) available in stock."
+                            ]
+                        },
+                        message="Insufficient stock.",
+                    )
+                cart_item.quantity = quantity
+                cart_item.save(update_fields=["quantity", "updated_at"])
+
+        # 2. Handle coupon application or removal if coupon_code key was sent
+        if "coupon_code" in request.data:
+            raw_code = (data.get("coupon_code") or "").strip().upper()
+            if not raw_code:
+                cart.applied_coupon = None
+                cart.save(update_fields=["applied_coupon", "updated_at"])
+            else:
+                now = timezone.now()
+                coupon = Coupon.objects.filter(code__iexact=raw_code, is_active=True).first()
+                if not coupon:
+                    return error_response(
+                        errors={"coupon_code": ["Invalid or inactive coupon code."]},
+                        message="Coupon invalid.",
+                    )
+                if getattr(coupon, "valid_from", None) and now < coupon.valid_from:
+                    return error_response(
+                        errors={"coupon_code": ["This coupon is not active yet."]},
+                        message="Coupon not yet valid.",
+                    )
+                if getattr(coupon, "valid_until", None) and now > coupon.valid_until:
+                    return error_response(
+                        errors={"coupon_code": ["This coupon has expired."]},
+                        message="Coupon expired.",
+                    )
+                usage_limit = getattr(coupon, "usage_limit", None)
+                used_count = getattr(coupon, "used_count", 0)
+                if usage_limit is not None and used_count >= usage_limit:
+                    return error_response(
+                        errors={"coupon_code": ["Coupon usage limit reached."]},
+                        message="Coupon limit reached.",
+                    )
+
+                cart.applied_coupon = coupon
+                cart.save(update_fields=["applied_coupon", "updated_at"])
+
+        serializer = CartSerializer(cart, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message="Cart updated successfully.",
+        )
+
+    def delete(self, request):
+        """
+        Remove a single item via ?id=<cart_item_id>, or clear the entire cart if ?id= is omitted.
+        """
+        cart = self._get_or_create_cart(request.user)
+        item_id = request.query_params.get("id")
+
+        if item_id:
+            cart_item = CartItem.objects.filter(id=item_id, cart=cart).first()
+            if not cart_item:
+                return error_response(
+                    errors={"id": ["Cart item not found."]},
+                    message="Cart item not found.",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                )
+            cart_item.delete()
+            msg = "Item removed from cart."
+        else:
+            cart.items.all().delete()
+            cart.applied_coupon = None
+            cart.save(update_fields=["applied_coupon", "updated_at"])
+            msg = "Cart cleared successfully."
+
+        serializer = CartSerializer(cart, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message=msg,
+        )

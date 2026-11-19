@@ -2,6 +2,8 @@ from decimal import Decimal
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.utils import timezone
+from django.conf import settings
+from catalogue.models import  Product
 
 
 class Coupon(models.Model):
@@ -65,3 +67,57 @@ class Coupon(models.Model):
 
     def __str__(self):
         return f"{self.code} ({self.discount_type})"
+
+
+
+
+class Cart(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="cart",
+    )
+    applied_coupon = models.ForeignKey(
+        "orders.Coupon",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="carts",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "orders_cart"
+
+    def __str__(self):
+        return f"Cart ({self.user.email})"
+
+
+class CartItem(models.Model):
+    cart = models.ForeignKey(
+        Cart,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="cart_items",
+    )
+    quantity = models.PositiveIntegerField(default=1)
+    added_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "orders_cart_item"
+        unique_together = ("cart", "product")
+
+    def __str__(self):
+        return f"{self.product.name} x {self.quantity}"
+
+    def get_unit_price(self, is_dealer: bool) -> Decimal:
+      
+        if is_dealer and self.product.dealer_price is not None:
+            return Decimal(self.product.dealer_price)
+        return Decimal(self.product.customer_price)
