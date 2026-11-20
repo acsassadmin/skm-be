@@ -6,11 +6,13 @@ from rest_framework.views import APIView
 
 # from utils.permissions import HasModulePermission
 from orders.models import Coupon
-from orders.serializers import CouponSerializer,OrderItemSerializer, OrderSerializer
+from orders.serializers import CouponSerializer,OrderItemSerializer, OrderSerializer, RefundSerializer, ReturnItemSerializer,ReturnRequestSerializer
 from utils.pagination import StandardPagination
 from utils.responses import error_response, success_response
+from .models import Refund, ReturnRequest
 from .utils.ordercalculation import *
 from utils.filters import *
+from .utils.returnandrefund import *
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from catalogue.models import Product
@@ -646,3 +648,269 @@ class OrderHistoryView(APIView):
         return paginator.get_paginated_response(
             serializer.data, message="Order history retrieved successfully"
         )
+
+
+def is_admin_user(user):
+    return bool(user and user.is_authenticated and (user.is_staff or user.is_superuser))
+class ReturnRequestView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return_id = request.query_params.get("id")
+        if return_id:
+            qs = ReturnRequest.objects.select_related("order").prefetch_related("items__order_item")
+            if not is_admin_user(request.user):
+                qs = qs.filter(order__user=request.user)
+            return_req = qs.filter(id=return_id).first()
+            if not return_req:
+                return error_response(message="Return request not found.", status_code=status.HTTP_404_NOT_FOUND)
+            return success_response(
+                data=ReturnRequestSerializer(return_req, context={"request": request}).data,
+                message="Return request retrieved successfully.",
+            )
+
+        queryset = ReturnRequest.objects.select_related("order").prefetch_related("items__order_item")
+        if not is_admin_user(request.user):
+            queryset = queryset.filter(order__user=request.user)
+
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+        if start_date:
+            queryset = queryset.filter(requested_at__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(requested_at__date__lte=end_date)
+
+        queryset = apply_search_and_filters(
+            queryset,
+            request,
+            search_fields=["return_number", "order__order_number", "customer_notes"],
+            filter_fields={
+                "status": "status",
+                "reason": "reason",
+                "order_id": "order_id",
+            },
+        )
+
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        serializer = ReturnRequestSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(serializer.data)
+
+    def post(self, request):
+        serializer = ReturnRequestSerializer(data=request.data, context={"request": request})
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as e:
+            return error_response(errors=e.detail, message="Return request creation failed.")
+
+        order = serializer.validated_data["order"]
+        if not is_admin_user(request.user) and getattr(order, "user_id", None) != request.user.id:
+            return error_response(
+                message="You do not have permission to create a return for this order.",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        return_req = serializer.save()
+        return success_response(
+            data=ReturnRequestSerializer(return_req, context={"request": request}).data,
+            message="Return request created successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    def put(self, request):
+        return_id = request.query_params.get("id")
+        if not return_id:
+            return error_response(message="Return request id is required.", status_code=status.HTTP_400_BAD_REQUEST)
+
+        return_req = (
+            ReturnRequest.objects.select_related("order")
+            .prefetch_related("items__order_item")
+            .filter(id=return_id)
+            .first()
+        )
+        if not return_req:
+            return error_response(message="Return request not found.", status_code=status.HTTP_404_NOT_FOUND)
+
+        if not is_admin_user(request.user):
+            return error_response(message="Admin privileges required.", status_code=status.HTTP_403_FORBIDDEN)
+
+        serializer = ReturnRequestSerializer(return_req, data=request.data, partial=True, context={"request": request})
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as e:
+            return error_response(errors=e.detail, message="Return request update failed.")
+
+        data = serializer.validated_data
+        target_status = data.get("status", return_req.status)
+        restock_approved = data.get("restock_approved", return_req.restock_approved)
+        admin_notes = data.get("admin_notes", return_req.admin_notes)
+
+        if target_status == ReturnRequest.Status.COMPLETED:
+            # Persist any non-completion field changes first, then run completion + restock helper
+            non_helper_data = {
+                k: v
+                for k, v in data.items()
+                if k not in ("status", "restock_approved", "admin_notes")
+            }
+            if non_helper_data:
+                serializer.update(return_req, non_helper_data)
+            return_req = complete_return_request(
+                return_req,
+                restock_approved=restock_approved,
+                admin_notes=admin_notes,
+            )
+        else:
+            return_req = serializer.save()
+            if data.get("status") == ReturnRequest.Status.REQUESTED and return_req.completed_at is not None:
+                return_req.completed_at = None
+                return_req.save(update_fields=["completed_at", "updated_at"])
+
+        return success_response(
+            data=ReturnRequestSerializer(return_req, context={"request": request}).data,
+            message="Return request updated successfully.",
+        )
+
+    def delete(self, request):
+        if not is_admin_user(request.user):
+            return error_response(message="Admin privileges required.", status_code=status.HTTP_403_FORBIDDEN)
+
+        return_id = request.query_params.get("id")
+        if not return_id:
+            return error_response(message="Return request id is required.", status_code=status.HTTP_400_BAD_REQUEST)
+
+        return_req = ReturnRequest.objects.filter(id=return_id).first()
+        if not return_req:
+            return error_response(message="Return request not found.", status_code=status.HTTP_404_NOT_FOUND)
+
+        return_req.delete()
+        return success_response(message="Return request deleted successfully.")
+
+
+class RefundView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        refund_id = request.query_params.get("id")
+        if refund_id:
+            qs = Refund.objects.select_related("order", "return_request")
+            if not is_admin_user(request.user):
+                qs = qs.filter(order__user=request.user)
+            refund = qs.filter(id=refund_id).first()
+            if not refund:
+                return error_response(message="Refund not found.", status_code=status.HTTP_404_NOT_FOUND)
+            return success_response(
+                data=RefundSerializer(refund, context={"request": request}).data,
+                message="Refund retrieved successfully.",
+            )
+
+        queryset = Refund.objects.select_related("order", "return_request")
+        if not is_admin_user(request.user):
+            queryset = queryset.filter(order__user=request.user)
+
+        queryset = apply_search_and_filters(
+            queryset,
+            request,
+            search_fields=[
+                "refund_number",
+                "order__order_number",
+                "return_request__return_number",
+                "gateway_refund_id",
+            ],
+            filter_fields={
+                "status": "status",
+                "refund_method": "refund_method",
+                "order_id": "order_id",
+                "return_request_id": "return_request_id",
+            },
+        )
+
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        serializer = RefundSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(serializer.data)
+
+    def post(self, request):
+        if not is_admin_user(request.user):
+            return error_response(message="Admin privileges required.", status_code=status.HTTP_403_FORBIDDEN)
+
+        serializer = RefundSerializer(data=request.data, context={"request": request})
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as e:
+            return error_response(errors=e.detail, message="Refund creation failed.")
+
+        refund = serializer.save()
+        if refund.status == Refund.Status.COMPLETED:
+            refund = update_refund_status(
+                refund,
+                new_status=Refund.Status.COMPLETED,
+                gateway_refund_id=refund.gateway_refund_id,
+            )
+
+        return success_response(
+            data=RefundSerializer(refund, context={"request": request}).data,
+            message="Refund created successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    def put(self, request):
+        if not is_admin_user(request.user):
+            return error_response(message="Admin privileges required.", status_code=status.HTTP_403_FORBIDDEN)
+
+        refund_id = request.query_params.get("id")
+        if not refund_id:
+            return error_response(message="Refund id is required.", status_code=status.HTTP_400_BAD_REQUEST)
+
+        refund = Refund.objects.select_related("order", "return_request").filter(id=refund_id).first()
+        if not refund:
+            return error_response(message="Refund not found.", status_code=status.HTTP_404_NOT_FOUND)
+
+        serializer = RefundSerializer(refund, data=request.data, partial=True, context={"request": request})
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as e:
+            return error_response(errors=e.detail, message="Refund update failed.")
+
+        data = serializer.validated_data
+        target_status = data.get("status", refund.status)
+        gateway_refund_id = data.get("gateway_refund_id", refund.gateway_refund_id)
+        failure_reason = data.get("failure_reason", refund.failure_reason)
+
+        # Save general fields first, then normalize status/timestamps via helper
+        non_status_data = {
+            k: v
+            for k, v in data.items()
+            if k not in ("status", "gateway_refund_id", "failure_reason")
+        }
+        if non_status_data:
+            serializer.update(refund, non_status_data)
+
+        if "status" in data or "gateway_refund_id" in data or "failure_reason" in data:
+            refund = update_refund_status(
+                refund,
+                new_status=target_status,
+                gateway_refund_id=gateway_refund_id,
+                failure_reason=failure_reason,
+            )
+        else:
+            refund.refresh_from_db()
+
+        return success_response(
+            data=RefundSerializer(refund, context={"request": request}).data,
+            message="Refund updated successfully.",
+        )
+
+    def delete(self, request):
+        if not is_admin_user(request.user):
+            return error_response(message="Admin privileges required.", status_code=status.HTTP_403_FORBIDDEN)
+
+        refund_id = request.query_params.get("id")
+        if not refund_id:
+            return error_response(message="Refund id is required.", status_code=status.HTTP_400_BAD_REQUEST)
+
+        refund = Refund.objects.filter(id=refund_id).first()
+        if not refund:
+            return error_response(message="Refund not found.", status_code=status.HTTP_404_NOT_FOUND)
+
+        refund.delete()
+        return success_response(message="Refund deleted successfully.")

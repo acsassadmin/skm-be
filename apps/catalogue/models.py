@@ -1,5 +1,9 @@
 from django.db import models
 from django.utils.text import slugify
+import uuid
+from django.utils import timezone
+
+
 
 
 class Category(models.Model):
@@ -93,3 +97,103 @@ class ProductVideo(models.Model):
     video_url = models.URLField(blank=True)
     video_file = models.FileField(upload_to="products/videos/", blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+class Warranty(models.Model):
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        EXPIRED = "EXPIRED", "Expired"
+        VOID = "VOID", "Void"
+        CLAIMED = "CLAIMED", "Claimed"
+
+    order_item = models.OneToOneField(
+        "orders.OrderItem",
+        on_delete=models.PROTECT,
+        related_name="warranty",
+        null=True,
+        blank=True,
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.PROTECT,
+        related_name="warranties",
+    )
+    serial_number = models.CharField(max_length=100, blank=True, db_index=True)
+    warranty_months = models.PositiveIntegerField(default=12)
+
+    start_date = models.DateField()
+    end_date = models.DateField(db_index=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        db_index=True,
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "catalogue_warranty"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        ref = self.serial_number or f"Item#{self.order_item_id or self.pk}"
+        return f"Warranty ({self.product.sku} - {ref})"
+
+
+class WarrantyClaim(models.Model):
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        UNDER_REVIEW = "UNDER_REVIEW", "Under Review"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        RESOLVED = "RESOLVED", "Resolved"
+
+    class Resolution(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        REPAIRED = "REPAIRED", "Repaired"
+        REPLACED = "REPLACED", "Replaced"
+        REJECTED = "REJECTED", "Rejected"
+
+    warranty = models.ForeignKey(
+        Warranty,
+        on_delete=models.PROTECT,
+        related_name="claims",
+    )
+    claim_number = models.CharField(
+        max_length=32,
+        unique=True,
+        db_index=True,
+        editable=False,
+    )
+    issue_description = models.TextField()
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.OPEN,
+        db_index=True,
+    )
+    resolution = models.CharField(
+        max_length=20,
+        choices=Resolution.choices,
+        default=Resolution.PENDING,
+    )
+    replacement_serial = models.CharField(max_length=100, blank=True)
+
+    reported_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "catalogue_warranty_claim"
+        ordering = ["-reported_at"]
+
+    def save(self, *args, **kwargs):
+        if not self.claim_number:
+            date_str = timezone.now().strftime("%Y%m%d")
+            suffix = uuid.uuid4().hex[:6].upper()
+            self.claim_number = f"CLM-{date_str}-{suffix}"
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.claim_number} ({self.warranty})"

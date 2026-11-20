@@ -6,7 +6,6 @@ from django.conf import settings
 from catalogue.models import  Product
 import uuid
 
-
 class Coupon(models.Model):
     """Coupon and promotional code management."""
 
@@ -132,6 +131,8 @@ class Order(models.Model):
         DELIVERED = "DELIVERED", "Delivered"
         CANCELLED = "CANCELLED", "Cancelled"
         REFUNDED = "REFUNDED", "Refunded"
+        RETURN_REQUESTED = "RETURN_REQUESTED", "Return Requested"
+        RETURNED = "RETURNED", "Returned"
 
     class PaymentStatus(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -225,3 +226,177 @@ class OrderItem(models.Model):
 
     def __str__(self):
         return f"{self.product_name} x {self.quantity} ({self.order.order_number})"
+
+
+
+
+class ReturnRequest(models.Model):
+    class Status(models.TextChoices):
+        REQUESTED = "REQUESTED", "Requested"
+        APPROVED = "APPROVED", "Approved"
+        PICKUP_SCHEDULED = "PICKUP_SCHEDULED", "Pickup Scheduled"
+        RECEIVED = "RECEIVED", "Received"
+        INSPECTED = "INSPECTED", "Inspected"
+        REJECTED = "REJECTED", "Rejected"
+        COMPLETED = "COMPLETED", "Completed"
+
+    class Reason(models.TextChoices):
+        DEFECTIVE = "DEFECTIVE", "Defective"
+        WRONG_ITEM = "WRONG_ITEM", "Wrong Item"
+        DAMAGED_IN_TRANSIT = "DAMAGED_IN_TRANSIT", "Damaged in Transit"
+        NOT_NEEDED = "NOT_NEEDED", "Not Needed"
+        OTHER = "OTHER", "Other"
+
+    return_number = models.CharField(
+        max_length=32,
+        unique=True,
+        db_index=True,
+        editable=False,
+    )
+    order = models.ForeignKey(
+        Order,
+        on_delete=models.PROTECT,
+        related_name="returns",
+    )
+    status = models.CharField(
+        max_length=25,
+        choices=Status.choices,
+        default=Status.REQUESTED,
+        db_index=True,
+    )
+    reason = models.CharField(
+        max_length=30,
+        choices=Reason.choices,
+    )
+    customer_notes = models.TextField(blank=True)
+    admin_notes = models.TextField(blank=True)
+    restock_approved = models.BooleanField(default=False)
+
+    requested_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "orders_return_request"
+        ordering = ["-requested_at"]
+
+    def save(self, *args, **kwargs):
+        if not self.return_number:
+            date_str = timezone.now().strftime("%Y%m%d")
+            suffix = uuid.uuid4().hex[:6].upper()
+            self.return_number = f"RET-{date_str}-{suffix}"
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.return_number} ({self.order.order_number})"
+
+
+class ReturnItem(models.Model):
+    class ItemCondition(models.TextChoices):
+        UNOPENED = "UNOPENED", "Unopened"
+        OPENED_GOOD = "OPENED_GOOD", "Opened - Good Condition"
+        DAMAGED = "DAMAGED", "Damaged"
+        DEFECTIVE = "DEFECTIVE", "Defective"
+
+    return_request = models.ForeignKey(
+        ReturnRequest,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    order_item = models.ForeignKey(
+        OrderItem,
+        on_delete=models.PROTECT,
+        related_name="return_items",
+    )
+    quantity = models.PositiveIntegerField(validators=[MinValueValidator(1)])
+    item_condition = models.CharField(
+        max_length=25,
+        choices=ItemCondition.choices,
+    )
+
+    class Meta:
+        db_table = "orders_return_item"
+        unique_together = ("return_request", "order_item")
+
+    def __str__(self):
+        return f"{self.order_item.product_name} x {self.quantity} ({self.return_request.return_number})"
+
+
+class Refund(models.Model):
+    class Status(models.TextChoices):
+        INITIATED = "INITIATED", "Initiated"
+        PROCESSING = "PROCESSING", "Processing"
+        COMPLETED = "COMPLETED", "Completed"
+        FAILED = "FAILED", "Failed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    class RefundMethod(models.TextChoices):
+        ORIGINAL_PAYMENT = "ORIGINAL_PAYMENT", "Original Payment Method"
+        BANK_TRANSFER = "BANK_TRANSFER", "Bank Transfer"
+        STORE_CREDIT = "STORE_CREDIT", "Store Credit"
+
+    refund_number = models.CharField(
+        max_length=32,
+        unique=True,
+        db_index=True,
+        editable=False,
+    )
+    order = models.ForeignKey(
+        Order,
+        on_delete=models.PROTECT,
+        related_name="refunds",
+    )
+    return_request = models.ForeignKey(
+        ReturnRequest,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="refunds",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.INITIATED,
+        db_index=True,
+    )
+    refund_method = models.CharField(
+        max_length=25,
+        choices=RefundMethod.choices,
+    )
+
+    subtotal_refund = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    tax_refund = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+    amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal("0.00"),
+    )
+
+    gateway_refund_id = models.CharField(max_length=100, blank=True, db_index=True)
+    failure_reason = models.TextField(blank=True)
+
+    processed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "orders_refund"
+        ordering = ["-created_at"]
+
+    def save(self, *args, **kwargs):
+        if not self.refund_number:
+            date_str = timezone.now().strftime("%Y%m%d")
+            suffix = uuid.uuid4().hex[:6].upper()
+            self.refund_number = f"RFD-{date_str}-{suffix}"
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.refund_number} ({self.order.order_number} - {self.amount})"
