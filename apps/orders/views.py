@@ -20,7 +20,11 @@ from .serializers import (
     CartAddItemSerializer,
     CartUpdateSerializer,
 )
-
+from core.schema import auto_schema
+from core.cache_hooks import *
+from core.cache_constants import *
+from drf_spectacular.utils import inline_serializer
+from rest_framework import serializers
 
 def is_orders_staff(user) -> bool:
     return bool(user and user.is_authenticated and (user.is_superuser or user.has_role("ADMIN")))
@@ -37,7 +41,13 @@ class CouponView(APIView):
     #         "DELETE": [IsAuthenticated(), HasModulePermission.for_module("Orders", "is_delete")],
     #     }
     #     return method_map.get(self.request.method, [IsAuthenticated()])
-
+    @auto_schema(
+        summary="Get coupons or a single coupon by ID",
+        params={"id": int, "search": str, "page": int},
+        response=CouponSerializer,
+        many=True,
+    )
+    @CacheHook.cache_api_response(namespace=CacheKeys.COUPONS, timeout=CacheTTL.MEDIUM)
     def get(self, request):
         coupon_id = request.query_params.get("id")
         if coupon_id:
@@ -57,6 +67,11 @@ class CouponView(APIView):
             CouponSerializer(page, many=True).data, message="Coupons retrieved successfully."
         )
 
+    @auto_schema(
+        summary="Create a new coupon",
+        request=CouponSerializer,
+        response=CouponSerializer,
+    )
     def post(self, request):
         serializer = CouponSerializer(data=request.data)
         try:
@@ -65,12 +80,19 @@ class CouponView(APIView):
             return error_response(errors=e.detail, message="Invalid coupon data.")
 
         coupon = serializer.save()
+        CacheHook.bump_version(CacheKeys.COUPONS)
         return success_response(
             data=CouponSerializer(coupon).data,
             message="Coupon created successfully.",
             status_code=status.HTTP_201_CREATED,
         )
 
+    @auto_schema(
+        summary="Update an existing coupon",
+        params={"id*": int},
+        request=CouponSerializer,
+        response=CouponSerializer,
+    )
     def put(self, request):
         coupon_id = request.query_params.get("id")
         coupon = Coupon.objects.filter(id=coupon_id).first()
@@ -84,8 +106,12 @@ class CouponView(APIView):
             return error_response(errors=e.detail, message="Coupon update failed.")
 
         serializer.save()
+        CacheHook.bump_version(CacheKeys.COUPONS)
         return success_response(data=serializer.data, message="Coupon updated successfully.")
-
+    @auto_schema(
+        summary="Delete a coupon",
+        params={"id*": int},
+    )
     def delete(self, request):
         coupon_id = request.query_params.get("id")
         coupon = Coupon.objects.filter(id=coupon_id).first()
@@ -93,13 +119,23 @@ class CouponView(APIView):
             return error_response(message="Coupon not found.", status_code=status.HTTP_404_NOT_FOUND)
 
         coupon.delete()
+        CacheHook.bump_version(CacheKeys.COUPONS)
         return success_response(message="Coupon deleted successfully.")
 
 
 class CouponValidateView(APIView):
     """Allows customers/dealers to preview discount on a cart subtotal before checkout."""
     permission_classes = [IsAuthenticated]
-
+    @auto_schema(
+        summary="Validate a coupon code against a cart subtotal",
+        request=inline_serializer(
+            name="CouponValidateRequest",
+            fields={
+                "code": serializers.CharField(),
+                "subtotal": serializers.DecimalField(max_digits=12, decimal_places=2),
+            },
+        ),
+    )
     def post(self, request):
         code = str(request.data.get("code", "")).strip()
         raw_subtotal = request.data.get("subtotal")

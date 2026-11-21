@@ -36,7 +36,7 @@ INSTALLED_APPS = [
     "django_filters",
     "drf_spectacular",
     #apps
-    "core",
+    "apps.core",
     "accounts",
     "catalogue",
     "orders"
@@ -93,6 +93,38 @@ DATABASES = {
         },
     }
 }
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379/1",
+        "TIMEOUT": 60
+    }
+}
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "loggers": {
+        "apps.core.cache_hooks": {
+            "handlers": ["console"],
+            "level": "DEBUG",
+            "propagate": False,
+        },
+        "apps.core.apps": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+}
+
+
 
 
 # Password validation

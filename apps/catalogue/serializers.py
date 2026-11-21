@@ -1,7 +1,8 @@
 from rest_framework import serializers
-from .models import Category, Product, ProductImage, ProductVideo
+from .models import *
 from django.db import transaction
 import json
+
 class CategorySerializer(serializers.ModelSerializer):
     parent_name = serializers.CharField(source="parent.name", read_only=True)
 
@@ -101,6 +102,14 @@ class ProductSerializer(serializers.ModelSerializer):
     #     if not can_see_dealer:
     #         data.pop("dealer_price", None)
     #     return data
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        specs = data.get("specifications")
+        if isinstance(specs, dict):
+            data["specifications"] = [
+                {"key": k, "value": v} for k, v in specs.items()
+            ]
+        return data
 
     def _attach_media(self, product, uploaded_images, uploaded_videos, video_urls):
         if uploaded_images:
@@ -158,3 +167,85 @@ class ProductSerializer(serializers.ModelSerializer):
 
         self._attach_media(instance, uploaded_images, uploaded_videos, video_urls)
         return instance
+
+
+class InventoryLogSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source="product.name", read_only=True)
+    product_sku = serializers.CharField(source="product.sku", read_only=True)
+    performed_by_email = serializers.EmailField(
+        source="performed_by.email", read_only=True, default=None
+    )
+
+    class Meta:
+        model = InventoryLog
+        fields = [
+            "id",
+            "product",
+            "product_name",
+            "product_sku",
+            "transaction_type",
+            "quantity_change",
+            "stock_before",
+            "stock_after",
+            "reference_id",
+            "notes",
+            "performed_by",
+            "performed_by_email",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+class StockAdjustmentInputSerializer(serializers.Serializer):
+    ALLOWED_MANUAL_TYPES = [
+        InventoryLog.TransactionType.RESTOCK,
+        InventoryLog.TransactionType.ADJUSTMENT,
+        InventoryLog.TransactionType.DAMAGED,
+    ]
+
+    product_id = serializers.IntegerField()
+    transaction_type = serializers.ChoiceField(choices=ALLOWED_MANUAL_TYPES)
+    quantity_change = serializers.IntegerField()
+    reference_id = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
+    notes = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        tx_type = attrs["transaction_type"]
+        qty = attrs["quantity_change"]
+
+        if qty == 0:
+            raise serializers.ValidationError({"quantity_change": "Quantity change cannot be zero."})
+
+        if tx_type == InventoryLog.TransactionType.RESTOCK and qty < 0:
+            raise serializers.ValidationError(
+                {"quantity_change": "RESTOCK must be a positive integer."}
+            )
+
+        if tx_type == InventoryLog.TransactionType.DAMAGED and qty > 0:
+            # Auto-convert positive input to negative deduction for convenience
+            attrs["quantity_change"] = -qty
+
+        return attrs
+
+
+class LowStockProductSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    stock_status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Product
+        fields = [
+            "id",
+            "sku",
+            "name",
+            "brand",
+            "category_name",
+            "stock_quantity",
+            "low_stock_threshold",
+            "stock_status",
+            "is_active",
+            "updated_at",
+        ]
+
+    def get_stock_status(self, obj):
+        return "OUT_OF_STOCK" if obj.stock_quantity == 0 else "LOW_STOCK"

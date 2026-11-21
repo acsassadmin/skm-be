@@ -5,7 +5,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill
 from django.db import transaction
 from django.utils.text import slugify
-
+from catalogue.models import InventoryLog
 from catalogue.models import Category, Product
 
 EXCEL_HEADERS = [
@@ -170,7 +170,7 @@ def export_products_from_db(queryset=None) -> BytesIO:
     return output
 
 
-def import_products_from_excel(file_obj) -> dict:
+def import_products_from_excel(file_obj, performed_by=None) -> dict:
     """Reads an uploaded .xlsx file and creates or updates Product rows matched by SKU."""
     wb = openpyxl.load_workbook(file_obj, data_only=True)
     ws = wb["SKM_Products"] if "SKM_Products" in wb.sheetnames else wb.active
@@ -229,6 +229,7 @@ def import_products_from_excel(file_obj) -> dict:
         hsn_code = str(get_val(row, "hsn_code", "")).strip()[:20]
         is_featured = _parse_bool(get_val(row, "is_featured"), default=False)
         is_active = _parse_bool(get_val(row, "is_active"), default=True)
+        final_stock = max(0, stock_qty)
 
         with transaction.atomic():
             category = category_cache.get(cat_name.lower())
@@ -259,12 +260,34 @@ def import_products_from_excel(file_obj) -> dict:
 
             existing = Product.objects.filter(sku__iexact=sku).first()
             if existing:
+                old_stock=existing.stock_quantity
                 for field, value in defaults.items():
                     setattr(existing, field, value)
                 existing.save()
+                delta = final_stock - old_stock
+                if delta != 0:
+                    InventoryLog.objects.create(
+                        product=existing,
+                        transaction_type=InventoryLog.TransactionType.EXCEL_IMPORT,
+                        quantity_change=delta,
+                        stock_before=old_stock,
+                        stock_after=final_stock,
+                        notes=f"Excel bulk update (row {row_num})",
+                        performed_by=performed_by,
+                    )
                 updated_count += 1
             else:
-                Product.objects.create(sku=sku[:60], **defaults)
+                new_product = Product.objects.create(sku=sku[:60], **defaults)
+                if final_stock > 0:
+                    InventoryLog.objects.create(
+                        product=new_product,
+                        transaction_type=InventoryLog.TransactionType.EXCEL_IMPORT,
+                        quantity_change=final_stock,
+                        stock_before=0,
+                        stock_after=final_stock,
+                        notes=f"Initial stock via Excel import (row {row_num})",
+                        performed_by=performed_by,
+                    )
                 created_count += 1
 
     return {

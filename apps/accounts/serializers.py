@@ -133,3 +133,39 @@ class VerifyOTPSerializer(serializers.Serializer):
     target = models.CharField(max_length=255) if False else serializers.CharField(max_length=255)
     otp_code = serializers.CharField(max_length=6)
     purpose = serializers.ChoiceField(choices=OTPVerification.Purpose.choices, default="REGISTER")
+
+
+class UserAddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserAddress
+        fields = [
+            "id",
+            "address_type",
+            "full_name",
+            "phone",
+            "company_name",
+            "gstin",
+            "address_line",
+            "city",
+            "state",
+            "pincode",
+            "is_default",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate_pincode(self, value):
+        cleaned = value.strip()
+        if not cleaned.isdigit() or len(cleaned) != 6:
+            raise serializers.ValidationError("Enter a valid 6-digit Indian PIN code.")
+        return cleaned
+
+    def validate_gstin(self, value):
+        cleaned = value.strip().upper()
+        if cleaned and len(cleaned) != 15:
+            raise serializers.ValidationError("GSTIN must be exactly 15 characters.")
+        return cleaned
+    
+    
+    

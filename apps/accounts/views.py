@@ -5,13 +5,16 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny,IsAuthenticated
 from utils.responses import success_response,error_response
 from rest_framework.exceptions import ValidationError
+from django.db.models import ProtectedError
 from rest_framework import status
 from utils.otp import generate_otp_code, get_otp_expiry
 from django.utils import timezone
-
+from core.cache_constants import *
+from core.cache_hooks import *
+from core.schema import auto_schema
 class SendOTPView(APIView):
     permission_classes = [AllowAny]
-
+    @auto_schema(summary="Send OTP",request=SendOTPSerializer,response=SendOTPSerializer)
     def post(self, request):
         serializer = SendOTPSerializer(data=request.data)
         try:
@@ -47,7 +50,7 @@ class SendOTPView(APIView):
 
 class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
-
+    @auto_schema(summary="verify OTP",request=VerifyOTPSerializer,response=VerifyOTPSerializer)
     def post(self, request):
         serializer = VerifyOTPSerializer(data=request.data)
         try:
@@ -102,7 +105,7 @@ class VerifyOTPView(APIView):
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
-
+    @auto_schema(summary="Register User",request=RegisterSerializer,response=RegisterSerializer)
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         try:
@@ -124,7 +127,7 @@ class RegisterView(APIView):
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
-
+    @auto_schema(summary="Login User",request=LoginSerializer,response=LoginSerializer)
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         try:
@@ -159,7 +162,13 @@ class ProfileView(APIView):
 class RoleView(APIView):
     permission_classes = [IsAuthenticated]
 
-    # READ (List all or retrieve single via ?id=)
+    @auto_schema(
+        summary="Get all roles or a single role by ID",
+        params={"id": int},
+        response=RoleSerializer,
+        many=True,
+    )
+    @CacheHook.cache_api_response(namespace=CacheKeys.PERMISSIONS, timeout=CacheTTL.SHORT)
     def get(self, request):
         role_id = request.query_params.get("id")
 
@@ -187,6 +196,11 @@ class RoleView(APIView):
         )
 
     # CREATE
+    @auto_schema(
+        summary="Create a new role",
+        request=RoleSerializer,
+        response=RoleSerializer,
+    )
     def post(self, request):
         serializer = RoleSerializer(data=request.data)
         try:
@@ -199,13 +213,19 @@ class RoleView(APIView):
             )
 
         serializer.save()
+        CacheHook.bump_version(CacheKeys.PERMISSIONS)
         return success_response(
             data=serializer.data,
             message="Role created successfully.",
             status_code=status.HTTP_201_CREATED,
         )
 
-    # UPDATE (via ?id=)
+    @auto_schema(
+        summary="Update an existing role",
+        params={"id*": int},
+        request=RoleSerializer,
+        response=RoleSerializer,
+    )
     def put(self, request):
         role_id = request.query_params.get("id")
         if not role_id:
@@ -233,13 +253,17 @@ class RoleView(APIView):
             )
 
         serializer.save()
+        CacheHook.bump_version(CacheKeys.PERMISSIONS)
         return success_response(
             data=serializer.data,
             message="Role updated successfully.",
             status_code=status.HTTP_200_OK,
         )
 
-    # DELETE (via ?id=)
+    @auto_schema(
+        summary="Delete a role",
+        params={"id*": int},
+    )
     def delete(self, request):
         role_id = request.query_params.get("id")
         if not role_id:
@@ -251,6 +275,7 @@ class RoleView(APIView):
         try:
             obj = Role.objects.get(id=role_id)
             obj.delete()
+            CacheHook.bump_version(CacheKeys.PERMISSIONS)
             return success_response(
                 message="Role deleted successfully.",
                 status_code=status.HTTP_200_OK,
@@ -274,7 +299,12 @@ class UserPermissionsAPIView(APIView):
     Returns the logged-in user's allowed screens (modules) and CRUD/download flags.
     """
     permission_classes = [IsAuthenticated]
-
+    @auto_schema(summary="Get logged-in user's module permissions")
+    @CacheHook.cache_api_response(
+        namespace=CacheKeys.PERMISSIONS,
+        timeout=CacheTTL.MEDIUM,
+        vary_on_user=True,  
+    )
     def get(self, request):
         user = request.user
 
@@ -349,6 +379,13 @@ class ModuleAPIView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @auto_schema(
+        summary="Get all modules or a single module by ID",
+        params={"id": int},
+        response=ModuleSerializer,
+        many=True,
+    )
+    @CacheHook.cache_api_response(namespace=CacheKeys.PERMISSIONS, timeout=CacheTTL.LONG)
     def get(self, request):
         mod_id = request.query_params.get("id")
         if mod_id:
@@ -361,11 +398,17 @@ class ModuleAPIView(APIView):
         qs = Module.objects.all().order_by("id")
         return success_response(data=ModuleSerializer(qs, many=True).data)
 
+    @auto_schema(
+        summary="Create a new module",
+        request=ModuleSerializer,
+        response=ModuleSerializer,
+    )
     def post(self, request):
         try:
             serializer = ModuleSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             serializer.save()
+            CacheHook.bump_version(CacheKeys.PERMISSIONS)
             return success_response(
                 data=serializer.data,
                 message="Module created successfully.",
@@ -374,6 +417,12 @@ class ModuleAPIView(APIView):
         except ValidationError as e:
             return error_response(errors=e.detail, message="Validation failed.")
 
+    @auto_schema(
+        summary="Update an existing module",
+        params={"id*": int},
+        request=ModuleSerializer,
+        response=ModuleSerializer,
+    )
     def put(self, request):
         mod_id = request.query_params.get("id")
         if not mod_id:
@@ -383,17 +432,23 @@ class ModuleAPIView(APIView):
             serializer = ModuleSerializer(obj, data=request.data, partial=True)
             serializer.is_valid(raise_exception=True)
             serializer.save()
+            CacheHook.bump_version(CacheKeys.PERMISSIONS)
             return success_response(data=serializer.data, message="Module updated successfully.")
         except Module.DoesNotExist:
             return error_response(errors={"detail": "Module not found."}, status_code=404)
         except ValidationError as e:
             return error_response(errors=e.detail, message="Validation failed.")
 
+    @auto_schema(
+        summary="Delete a module",
+        params={"id*": int},
+    )
     def delete(self, request):
         mod_id = request.query_params.get("id")
         if not mod_id:
             return error_response(errors={"detail": "Query parameter ?id= is required."})
         deleted, _ = Module.objects.filter(id=mod_id).delete()
+        CacheHook.bump_version(CacheKeys.PERMISSIONS)
         if not deleted:
             return error_response(errors={"detail": "Module not found."}, status_code=404)
         return success_response(message="Module deleted successfully.")
@@ -407,7 +462,13 @@ class RoleModulePermissionAPIView(APIView):
     DELETE /api/auth/role-permissions/?id=1      -> Delete mapping
     """
     permission_classes = [IsAuthenticated]  # Restrict to ADMIN via HasModulePermission below
-
+    @auto_schema(
+        summary="Get role-module permissions (all, by role_id, or single by id)",
+        params={"id": int, "role_id": int},
+        response=RoleModulePermissionSerializer,
+        many=True,
+    )
+    @CacheHook.cache_api_response(namespace=CacheKeys.PERMISSIONS, timeout=CacheTTL.LONG)
     def get(self, request):
         perm_id = request.query_params.get("id")
         role_id = request.query_params.get("role_id")
@@ -424,12 +485,17 @@ class RoleModulePermissionAPIView(APIView):
             qs = qs.filter(role_id=role_id)
 
         return success_response(data=RoleModulePermissionSerializer(qs, many=True).data)
-
+    @auto_schema(
+        summary="Create role-module permission mapping",
+        request=RoleModulePermissionSerializer,
+        response=RoleModulePermissionSerializer,
+    )
     def post(self, request):
         try:
             serializer = RoleModulePermissionSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             serializer.save()
+            CacheHook.bump_version(CacheKeys.PERMISSIONS)
             return success_response(
                 data=serializer.data,
                 message="Role module permission created.",
@@ -437,7 +503,12 @@ class RoleModulePermissionAPIView(APIView):
             )
         except ValidationError as e:
             return error_response(errors=e.detail, message="Validation failed.")
-
+    @auto_schema(
+        summary="Update role-module permission flags",
+        params={"id*": int},
+        request=RoleModulePermissionSerializer,
+        response=RoleModulePermissionSerializer,
+    )
     def put(self, request):
         perm_id = request.query_params.get("id")
         if not perm_id:
@@ -448,18 +519,24 @@ class RoleModulePermissionAPIView(APIView):
             serializer = RoleModulePermissionSerializer(obj, data=request.data, partial=True)
             serializer.is_valid(raise_exception=True)
             serializer.save()
+            CacheHook.bump_version(CacheKeys.PERMISSIONS)
             return success_response(data=serializer.data, message="Permissions updated.")
         except RoleModulePermission.DoesNotExist:
             return error_response(errors={"detail": "Permission record not found."}, status_code=404)
         except ValidationError as e:
             return error_response(errors=e.detail, message="Validation failed.")
 
+    @auto_schema(
+        summary="Delete role-module permission mapping",
+        params={"id*": int},
+    )
     def delete(self, request):
         perm_id = request.query_params.get("id")
         if not perm_id:
             return error_response(errors={"detail": "Query parameter ?id= is required."})
 
         deleted, _ = RoleModulePermission.objects.filter(id=perm_id).delete()
+        CacheHook.bump_version(CacheKeys.PERMISSIONS)
         if not deleted:
             return error_response(errors={"detail": "Permission record not found."}, status_code=404)
         return success_response(message="Permission record deleted.")
@@ -468,6 +545,12 @@ class UserView(APIView):
     permission_classes = [IsAuthenticated]
 
     # READ (List all or retrieve single via ?id=)
+    @auto_schema(
+        summary="Get all users or a single user by ID",
+        params={"id": int},
+        response=UserSerializer,
+        many=True,
+    )
     def get(self, request):
         user_id = request.query_params.get("id")
 
@@ -495,6 +578,11 @@ class UserView(APIView):
         )
 
     # CREATE
+    @auto_schema(
+        summary="Create a new user",
+        request=RegisterSerializer,
+        response=UserSerializer,
+    )
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         try:
@@ -514,6 +602,12 @@ class UserView(APIView):
         )
 
     # UPDATE (via ?id=)
+    @auto_schema(
+        summary="Update user details, role, or approval status",
+        params={"id*": int},
+        request=UserSerializer,
+        response=UserSerializer,
+    )
     def put(self, request):
         user_id = request.query_params.get("id")
         if not user_id:
@@ -547,7 +641,10 @@ class UserView(APIView):
             status_code=status.HTTP_200_OK,
         )
 
-    # DELETE (via ?id=)
+    @auto_schema(
+        summary="Deactivate a user account",
+        params={"id*": int},
+    )
     def delete(self, request):
         user_id = request.query_params.get("id")
         if not user_id:
@@ -569,3 +666,114 @@ class UserView(APIView):
                 message="User not found.",
                 status_code=status.HTTP_404_NOT_FOUND,
             )
+
+class UserAddressView(APIView):
+    """
+    GET    /api/auth/addresses/         -> List user's saved addresses (or ?id= for single)
+    POST   /api/auth/addresses/         -> Add a new shipping/billing address
+    PUT    /api/auth/addresses/?id=1    -> Update an address
+    DELETE /api/auth/addresses/?id=1    -> Delete an address
+    """
+
+    permission_classes = [IsAuthenticated]
+    @auto_schema(
+        summary="Get user's saved addresses or a single address by ID",
+        params={"id": int},
+        response=UserAddressSerializer,
+        many=True,
+    )
+    def get(self, request):
+        addr_id = request.query_params.get("id")
+        if addr_id:
+            address = UserAddress.objects.filter(id=addr_id, user=request.user).first()
+            if not address:
+                return error_response(
+                    message="Address not found.", status_code=status.HTTP_404_NOT_FOUND
+                )
+            return success_response(data=UserAddressSerializer(address).data)
+
+        addresses = UserAddress.objects.filter(user=request.user)
+        return success_response(
+            data=UserAddressSerializer(addresses, many=True).data,
+            message="Addresses retrieved successfully.",
+        )
+
+    @auto_schema(
+        summary="Add a new shipping/billing address",
+        request=UserAddressSerializer,
+        response=UserAddressSerializer,
+    )
+    def post(self, request):
+        serializer = UserAddressSerializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as e:
+            return error_response(errors=e.detail, message="Invalid address data.")
+
+        # Auto-mark first address as default
+        is_first = not UserAddress.objects.filter(user=request.user).exists()
+        is_default = serializer.validated_data.get("is_default", False) or is_first
+
+        address = serializer.save(user=request.user, is_default=is_default)
+        return success_response(
+            data=UserAddressSerializer(address).data,
+            message="Address saved successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
+    @auto_schema(
+        summary="Update an existing address",
+        params={"id*": int},
+        request=UserAddressSerializer,
+        response=UserAddressSerializer,
+    )
+    def put(self, request):
+        addr_id = request.query_params.get("id")
+        if not addr_id:
+            return error_response(
+                errors={"id": "Query parameter ?id= is required."},
+                message="Address ID missing.",
+            )
+
+        address = UserAddress.objects.filter(id=addr_id, user=request.user).first()
+        if not address:
+            return error_response(
+                message="Address not found.", status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = UserAddressSerializer(address, data=request.data, partial=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as e:
+            return error_response(errors=e.detail, message="Invalid address update.")
+
+        serializer.save()
+        return success_response(data=serializer.data, message="Address updated successfully.")
+    @auto_schema(
+        summary="Delete a saved address",
+        params={"id*": int},
+    )
+    def delete(self, request):
+        addr_id = request.query_params.get("id")
+        if not addr_id:
+            return error_response(
+                errors={"id": "Query parameter ?id= is required."},
+                message="Address ID missing.",
+            )
+
+        address = UserAddress.objects.filter(id=addr_id, user=request.user).first()
+        if not address:
+            return error_response(
+                message="Address not found.", status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        was_default = address.is_default
+        address.delete()
+
+        # Promote most recent remaining address to default if the default was deleted
+        if was_default:
+            next_addr = UserAddress.objects.filter(user=request.user).first()
+            if next_addr:
+                next_addr.is_default = True
+                next_addr.save(update_fields=["is_default"])
+
+        return success_response(message="Address deleted successfully.")

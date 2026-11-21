@@ -9,6 +9,7 @@ urlpatterns = [
     path("profile/", ProfileView.as_view(), name="profile"),
     path("roles/", RoleView.as_view(), name="roles"),
     path("users/", UserView.as_view(), name="users"),
+    path("addresses/", UserAddressView.as_view(), name="user-addresses"),
     path("send-otp/", SendOTPView.as_view(), name="send-otp"),
     path("verify-otp/", VerifyOTPView.as_view(), name="verify-otp"),
     path("permissions/", UserPermissionsAPIView.as_view(), name="user-permissions"),

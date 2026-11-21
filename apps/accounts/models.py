@@ -100,3 +100,42 @@ class OTPVerification(models.Model):
 
     def __str__(self):
         return f"{self.target} - {self.purpose} ({self.otp_code})"
+    
+class UserAddress(models.Model):
+    """Saved shipping/billing addresses & optional GSTIN for Customers & Dealers."""
+
+    class AddressType(models.TextChoices):
+        HOME = "HOME", "Home"
+        OFFICE = "OFFICE", "Office / Warehouse"
+        OTHER = "OTHER", "Other"
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="addresses")
+    address_type = models.CharField(
+        max_length=15, choices=AddressType.choices, default=AddressType.HOME
+    )
+    full_name = models.CharField(max_length=150)
+    phone = models.CharField(max_length=15)
+    company_name = models.CharField(max_length=150, blank=True)
+    gstin = models.CharField(max_length=20, blank=True)
+    address_line = models.TextField()
+    city = models.CharField(max_length=100)
+    state = models.CharField(max_length=100)
+    pincode = models.CharField(max_length=15)
+    is_default = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-is_default", "-updated_at"]
+
+    def save(self, *args, **kwargs):
+        if self.gstin:
+            self.gstin = self.gstin.upper().strip()
+        if self.is_default:
+            UserAddress.objects.filter(user=self.user, is_default=True).exclude(pk=self.pk).update(
+                is_default=False
+            )
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.full_name} - {self.city} ({self.user.email})"
