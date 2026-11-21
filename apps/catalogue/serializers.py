@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import *, Warranty, WarrantyClaim
+from .models import *
 from django.db import transaction
 import json
 

@@ -8,17 +8,7 @@ from utils.permissions import HasModulePermission
 from utils.responses import error_response, success_response
 from utils.filters import *
 from .models import Category, Product, ProductImage, ProductVideo,WarrantyClaim,Warranty
-from .serializers import (
-    CategorySerializer,
-    ProductImageSerializer,
-    ProductSerializer,
-    ProductVideoSerializer,
-    WarrantySerializer,
-    WarrantyClaimSerializer
-    InventoryLogSerializer,
-    LowStockProductSerializer,
-    StockAdjustmentInputSerializer
-)
+from .serializers import *
 from .utils.warrantyhelper import *
 from catalogue.services.excel_service import import_products_from_excel,export_products_from_db,generate_product_import_template
 from django.http import HttpResponse
