@@ -1,7 +1,8 @@
 from decimal import Decimal, ROUND_HALF_UP
 from rest_framework import serializers
 from catalogue.models import Product
-from .models import Cart, CartItem, Coupon, Order, OrderItem
+from django.db import transaction
+from .models import Cart, CartItem, Coupon, Order, OrderItem, Refund,ReturnItem,ReturnRequest
 from .services.cart_service import is_user_dealer, calculate_coupon_discount
 
 
@@ -223,3 +224,217 @@ class OrderSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+
+class ReturnItemSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source="order_item.product_name", read_only=True)
+    order_item_id = serializers.PrimaryKeyRelatedField(
+        source="order_item",
+        queryset=OrderItem.objects.all(),
+    )
+
+    class Meta:
+        model = ReturnItem
+        fields = [
+            "id",
+            "order_item_id",
+            "product_name",
+            "quantity",
+            "item_condition",
+        ]
+        read_only_fields = ["id", "product_name"]
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            data = data.copy()
+            if "order_item_id" not in data and "order_item" in data:
+                data["order_item_id"] = data["order_item"]
+        return super().to_internal_value(data)
+
+
+class ReturnRequestSerializer(serializers.ModelSerializer):
+    order_id = serializers.PrimaryKeyRelatedField(
+        source="order",
+        queryset=Order.objects.all(),
+    )
+    order_number = serializers.CharField(source="order.order_number", read_only=True)
+    items = ReturnItemSerializer(many=True)
+
+    class Meta:
+        model = ReturnRequest
+        fields = [
+            "id",
+            "return_number",
+            "order_id",
+            "order_number",
+            "status",
+            "reason",
+            "customer_notes",
+            "admin_notes",
+            "restock_approved",
+            "requested_at",
+            "completed_at",
+            "updated_at",
+            "items",
+        ]
+        read_only_fields = [
+            "id",
+            "return_number",
+            "requested_at",
+            "completed_at",
+            "updated_at",
+        ]
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            data = data.copy()
+            if "order_id" not in data and "order" in data:
+                data["order_id"] = data["order"]
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):
+        order = attrs.get("order") or getattr(self.instance, "order", None)
+        items = attrs.get("items")
+
+        if items is not None and len(items) == 0:
+            raise serializers.ValidationError({"items": "At least one return item is required."})
+
+        if items and order:
+            order_ref = getattr(order, "order_number", None) or f"#{order.id}"
+            for item_data in items:
+                order_item = item_data["order_item"]
+                qty = item_data["quantity"]
+
+                if order_item.order_id != order.id:
+                    raise serializers.ValidationError(
+                        {"items": f"OrderItem #{order_item.id} does not belong to order {order_ref}."}
+                    )
+
+                if qty > order_item.quantity:
+                    raise serializers.ValidationError(
+                        {
+                            "items": (
+                                f"Return quantity ({qty}) for {order_item.product_name} "
+                                f"cannot exceed ordered quantity ({order_item.quantity})."
+                            )
+                        }
+                    )
+
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        items_data = validated_data.pop("items")
+        return_request = ReturnRequest.objects.create(**validated_data)
+
+        for item_data in items_data:
+            ReturnItem.objects.create(return_request=return_request, **item_data)
+
+        return return_request
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        items_data = validated_data.pop("items", None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if items_data is not None:
+            instance.items.all().delete()
+            for item_data in items_data:
+                ReturnItem.objects.create(return_request=instance, **item_data)
+
+        return instance
+
+
+class RefundSerializer(serializers.ModelSerializer):
+    order_id = serializers.PrimaryKeyRelatedField(
+        source="order",
+        queryset=Order.objects.all(),
+    )
+    order_number = serializers.CharField(source="order.order_number", read_only=True)
+    return_request_id = serializers.PrimaryKeyRelatedField(
+        source="return_request",
+        queryset=ReturnRequest.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+    return_number = serializers.CharField(
+        source="return_request.return_number",
+        read_only=True,
+        allow_null=True,
+    )
+
+    class Meta:
+        model = Refund
+        fields = [
+            "id",
+            "refund_number",
+            "order_id",
+            "order_number",
+            "return_request_id",
+            "return_number",
+            "status",
+            "refund_method",
+            "subtotal_refund",
+            "tax_refund",
+            "amount",
+            "gateway_refund_id",
+            "failure_reason",
+            "processed_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "refund_number",
+            "processed_at",
+            "created_at",
+            "updated_at",
+        ]
+
+    def to_internal_value(self, data):
+        if isinstance(data, dict):
+            data = data.copy()
+            if "order_id" not in data and "order" in data:
+                data["order_id"] = data["order"]
+            if "return_request_id" not in data and "return_request" in data:
+                data["return_request_id"] = data["return_request"]
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):
+        order = attrs.get("order") or getattr(self.instance, "order", None)
+        return_request = attrs.get("return_request")
+        if return_request is None and self.instance is not None:
+            return_request = self.instance.return_request
+
+        if return_request and order and return_request.order_id != order.id:
+            raise serializers.ValidationError(
+                {"return_request_id": "Return request does not belong to the selected order."}
+            )
+
+        subtotal = attrs.get("subtotal_refund")
+        if subtotal is None and self.instance is not None:
+            subtotal = self.instance.subtotal_refund
+        subtotal = subtotal if subtotal is not None else Decimal("0.00")
+
+        tax = attrs.get("tax_refund")
+        if tax is None and self.instance is not None:
+            tax = self.instance.tax_refund
+        tax = tax if tax is not None else Decimal("0.00")
+
+        amount = attrs.get("amount")
+        if amount is None and self.instance is not None:
+            amount = self.instance.amount
+
+        if subtotal < Decimal("0.00") or tax < Decimal("0.00"):
+            raise serializers.ValidationError("Refund amounts cannot be negative.")
+
+        if amount is not None and amount < Decimal("0.00"):
+            raise serializers.ValidationError({"amount": "Total refund amount cannot be negative."})
+
+        if "amount" not in attrs and self.instance is None:
+            attrs["amount"] = subtotal + tax
+
+        return attrs
