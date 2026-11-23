@@ -16,4 +16,5 @@ dependencies = [
     "pymysql>=1.2.4",
     "python-dotenv>=1.2.4",
     "redis>=8.1.0",
+    "reportlab>=5.1.0",
 ]

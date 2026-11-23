@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import CouponValidateView, CouponView,CartView,OrderView,OrderItemView,OrderHistoryView, ReturnRequestView,RefundView
+from .views import *
 
 urlpatterns = [
     path("coupons/", CouponView.as_view(), name="orders-coupons"),
@@ -10,5 +10,7 @@ urlpatterns = [
     path("orders-history/", OrderHistoryView.as_view(), name="order-history"),
     path("returns/", ReturnRequestView.as_view(), name="return-requests"),
     path("refunds/", RefundView.as_view(), name="refunds"),
+    path("reports/sales/", SalesAnalyticsReportView.as_view(), name="sales-analytics-report"),
+    path("reports/sales/export/", SalesReportExportView.as_view(), name="sales-report-export"),
 
 ]

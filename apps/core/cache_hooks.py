@@ -67,7 +67,7 @@ class CacheHook:
             logger.error("Cache BUMP_VERSION failed for '%s': %s", version_key, exc)
 
     @staticmethod
-    def cache_api_response(namespace: str, timeout: Optional[int] = None,vary_on_user: bool = False):
+    def cache_api_response(namespace: str, timeout: Optional[int] = None,vary_on_user: bool = False,scope_func: Optional[Callable] = None,):
         """
         Decorator for DRF GET methods.
         Generates a fixed-length ~35-char cache key regardless of query param length.
@@ -76,7 +76,13 @@ class CacheHook:
             @functools.wraps(view_func)
             def wrapper(self, request, *args, **kwargs):
                 version = CacheHook.get_version(namespace)
-
+                if scope_func:
+                    scope = scope_func(request)
+                elif vary_on_user:
+                    user_id = getattr(request.user, "id", None) or "anon"
+                    scope = f"user:{user_id}"
+                else:
+                    scope = "admin" if getattr(request.user, "is_staff", False) else "public"
                 # Isolate by exact user ID when vary_on_user=True, otherwise by role
                 if vary_on_user:
                     user_id = getattr(request.user, "id", None) or "anon"

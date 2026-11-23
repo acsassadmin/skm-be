@@ -3,7 +3,8 @@ from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-
+from datetime import datetime
+from django.http import HttpResponse
 # from utils.permissions import HasModulePermission
 from orders.models import Coupon
 from orders.serializers import CouponSerializer,OrderItemSerializer, OrderSerializer, RefundSerializer, ReturnItemSerializer,ReturnRequestSerializer
@@ -12,6 +13,7 @@ from utils.responses import error_response, success_response
 from .models import Refund, ReturnRequest
 from .utils.ordercalculation import *
 from utils.filters import *
+from .utils.report_filters import *
 from .utils.returnandrefund import *
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -27,6 +29,12 @@ from core.cache_hooks import *
 from core.cache_constants import *
 from drf_spectacular.utils import inline_serializer
 from rest_framework import serializers
+from utils.permissions import *
+from orders.services.report_service import (
+    build_sales_report_data,
+    export_sales_report_excel,
+    export_sales_report_pdf,
+)
 
 def is_orders_staff(user) -> bool:
     return bool(user and user.is_authenticated and (user.is_superuser or user.has_role("ADMIN")))
@@ -49,7 +57,11 @@ class CouponView(APIView):
         response=CouponSerializer,
         many=True,
     )
-    @CacheHook.cache_api_response(namespace=CacheKeys.COUPONS, timeout=CacheTTL.MEDIUM)
+    @CacheHook.cache_api_response(
+        namespace=CacheKeys.COUPONS,
+        timeout=CacheTTL.MEDIUM,
+        scope_func=lambda req: "orders_staff" if is_orders_staff(req.user) else "public",
+    )
     def get(self, request):
         coupon_id = request.query_params.get("id")
         if coupon_id:
@@ -822,7 +834,7 @@ class ReturnRequestView(APIView):
         return success_response(message="Return request deleted successfully.")
 
 
-class RefundView(APIView):
+class RefundView(APIView):   
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -950,3 +962,85 @@ class RefundView(APIView):
 
         refund.delete()
         return success_response(message="Refund deleted successfully.")
+    
+class SalesAnalyticsReportView(APIView):
+    """
+    GET /api/orders/reports/sales/?period=monthly|quarterly|annual
+    GET /api/orders/reports/sales/?start_date=2026-11-01&end_date=2026-11-21
+    """
+
+    permission_classes = [IsAuthenticated, HasModulePermission.for_module("Orders", "is_view")]
+
+    @auto_schema(
+        summary="Get Sales & Revenue Analytics Report (monthly, quarterly, annual, or custom)",
+        params={
+            "period": str,
+            "start_date": str,
+            "end_date": str,
+        },
+    )
+    @CacheHook.cache_api_response(namespace=CacheKeys.SALES_REPORTS, timeout=CacheTTL.MEDIUM)
+    def get(self, request):
+        parsed, err = validate_report_params(request)
+        if err:
+            return error_response(message=err, status_code=status.HTTP_400_BAD_REQUEST)
+
+        report_data = build_sales_report_data(
+            period=parsed["period"],
+            start_date=parsed["start_date"],
+            end_date=parsed["end_date"],
+        )
+        return success_response(
+            data=report_data,
+            message="Sales and revenue report generated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+
+
+class SalesReportExportView(APIView):
+    """
+    GET /api/orders/reports/sales/export/?period=monthly&format=xlsx
+    GET /api/orders/reports/sales/export/?period=quarterly&format=pdf
+    """
+
+    # permission_classes = [IsAuthenticated,HasModulePermission.for_module("Orders", "is_download")]
+    permission_classes = [IsAuthenticated]
+
+    @auto_schema(
+        summary="Download Sales & Revenue Report (xlsx or pdf)",
+        params={
+            "period": str,
+            "start_date": str,
+            "end_date": str,
+            "format": str,
+        },
+    )
+    def get(self, request):
+        parsed, err = validate_report_params(
+            request,
+            require_format=True,
+            allowed_formats={"xlsx", "pdf"},
+        )
+        if err:
+            return error_response(message=err, status_code=status.HTTP_400_BAD_REQUEST)
+
+        report_data = build_sales_report_data(
+            period=parsed["period"],
+            start_date=parsed["start_date"],
+            end_date=parsed["end_date"],
+        )
+        filename_base = f"SKM_Sales_Report_{report_data['start_date']}_to_{report_data['end_date']}"
+
+        if parsed["format"] == "pdf":
+            pdf_buffer = export_sales_report_pdf(report_data)
+            response = HttpResponse(pdf_buffer.getvalue(), content_type="application/pdf")
+            response["Content-Disposition"] = f'attachment; filename="{filename_base}.pdf"'
+            return response
+
+        xlsx_buffer = export_sales_report_excel(report_data)
+        response = HttpResponse(
+            xlsx_buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename_base}.xlsx"'
+        return response
