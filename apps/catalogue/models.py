@@ -2,7 +2,9 @@ from django.db import models
 from django.utils.text import slugify
 import uuid
 from django.utils import timezone
-
+from decimal import Decimal
+from django.core.validators import MaxValueValidator, MinValueValidator
+from django.conf import settings
 
 from django.contrib.auth import get_user_model
 User=get_user_model()
@@ -52,6 +54,12 @@ class Product(models.Model):
     stock_quantity = models.PositiveIntegerField(default=0)
     low_stock_threshold = models.PositiveIntegerField(default=5)
     warranty_months = models.PositiveIntegerField(default=12)
+    average_rating = models.DecimalField(
+    max_digits=3,
+    decimal_places=2,
+    default=Decimal("0.00"),
+    )
+    review_count = models.PositiveIntegerField(default=0)
 
     is_featured = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
@@ -250,3 +258,72 @@ class InventoryLog(models.Model):
     def __str__(self):
         sign = "+" if self.quantity_change > 0 else ""
         return f"{self.product.sku} | {self.transaction_type} ({sign}{self.quantity_change})"
+
+
+class ProductReview(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name="reviews",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="reviews",
+    )
+    order_item = models.OneToOneField(
+        "orders.OrderItem",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="review",
+    )
+
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    title = models.CharField(max_length=150, blank=True)
+    comment = models.TextField(blank=True)
+
+    is_verified_purchase = models.BooleanField(default=False, db_index=True)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    admin_reply = models.TextField(blank=True)
+    replied_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["product", "user"],
+                name="unique_user_product_review",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.product.name} - {self.rating}★ by {self.user.email}"
+
+
+class ReviewImage(models.Model):
+    review = models.ForeignKey(
+        ProductReview,
+        on_delete=models.CASCADE,
+        related_name="images",
+    )
+    image = models.ImageField(upload_to="reviews/images/")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Image for review #{self.review_id}"

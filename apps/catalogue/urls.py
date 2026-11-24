@@ -1,5 +1,11 @@
 from django.urls import path
-from .views import CategoryView, ProductImageView, ProductVideoView, ProductView,ProductExcelExportView,ProductExcelImportView, WarrantyView, WarrantyClaimView,InventoryView,LowStockAlertView
+from .views import (
+    CategoryView, ProductImageView, 
+    ProductVideoView, ProductView,
+    ProductExcelExportView,ProductExcelImportView, 
+    WarrantyView, WarrantyClaimView,
+    InventoryView,LowStockAlertView,
+    ProductReviewView, MyReviewsView,)
 
 urlpatterns = [
     path("categories/", CategoryView.as_view(), name="catalogue-categories"),
@@ -12,4 +18,6 @@ urlpatterns = [
     path("warranty-claims/", WarrantyClaimView.as_view(), name="warranty-claim"),
     path("inventory/", InventoryView.as_view(), name="catalogue-inventory"),
     path("inventory/alerts/", LowStockAlertView.as_view(), name="catalogue-inventory-alerts"),
+    path("myreviews/", MyReviewsView.as_view(), name="my-reviews"),
+    path("reviews/", ProductReviewView.as_view(), name="reviews")
 ]
