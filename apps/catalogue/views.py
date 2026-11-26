@@ -2,7 +2,9 @@ from django.db.models import Q,F
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAuthenticatedOrReadOnly
+from django.utils import timezone
+from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from utils.permissions import HasModulePermission
 from utils.responses import error_response, success_response
@@ -11,6 +13,7 @@ from .models import Category, Product, ProductImage, ProductVideo,WarrantyClaim,
 from .serializers import *
 #
 from .utils.warrantyhelper import *
+from .utils.reviews import *
 from catalogue.services.excel_service import import_products_from_excel,export_products_from_db,generate_product_import_template
 from django.http import HttpResponse
 from utils.pagination import StandardPagination
@@ -747,4 +750,222 @@ class LowStockAlertView(APIView):
         serializer = LowStockProductSerializer(page, many=True)
         return paginator.get_paginated_response(
             serializer.data, message="Low stock alerts retrieved successfully."
+        )
+
+class ProductReviewView(APIView):
+    """
+    Collection (/api/reviews/):
+      GET  ?product=1&rating=5&search=...&start_date=...&end_date=...
+      POST (authenticated)
+
+    Detail (/api/reviews/<pk>/):
+      GET    (single review)
+      PATCH  (owner or admin/staff)
+      DELETE (owner or admin/staff)
+    """
+    permission_classes = [IsAuthenticatedOrReadOnly]
+
+    def _is_staff_or_admin(self, user) -> bool:
+        return bool(
+            user
+            and user.is_authenticated
+            and (user.is_staff or user.is_superuser or user.has_role("ADMIN"))
+        )
+
+    def _can_manage(self, user, review) -> bool:
+        if not user or not user.is_authenticated:
+            return False
+        return review.user_id == user.id or self._is_staff_or_admin(user)
+
+    def _get_review(self, pk) -> ProductReview:
+        return get_object_or_404(
+            ProductReview.objects.select_related("product", "user", "order_item").prefetch_related("images"),
+            pk=pk,
+        )
+
+    def get(self, request, pk=None):
+        if pk is not None:
+            review = self._get_review(pk)
+            serializer = ProductReviewSerializer(review, context={"request": request})
+            return success_response(data=serializer.data, message="Review retrieved successfully")
+
+        queryset = (
+            ProductReview.objects.select_related("product", "user", "order_item")
+            .prefetch_related("images")
+        )
+        is_staff = self._is_staff_or_admin(request.user)
+
+        if not is_staff:
+            queryset = queryset.filter(status=ProductReview.Status.APPROVED)
+
+        filter_fields = {
+            "product": "product_id",
+            "rating": "rating",
+            "verified": "is_verified_purchase",
+        }
+        if is_staff:
+            filter_fields["status"] = "status"
+
+        queryset = apply_search_and_filters(
+            queryset,
+            request,
+            search_fields=["title", "comment", "product__name", "user__full_name"],
+            filter_fields=filter_fields,
+        )
+
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        serializer = ProductReviewSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(
+            serializer.data,
+            message="Reviews retrieved successfully",
+        )
+
+    def post(self, request, pk=None):
+        if not request.user.is_authenticated:
+            return error_response(
+                message="Authentication required",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        serializer = ProductReviewSerializer(data=request.data, context={"request": request})
+        if not serializer.is_valid():
+            return error_response(
+                errors=serializer.errors,
+                message="Validation failed",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        product = serializer.validated_data["product"]
+        order_item = serializer.validated_data.get("order_item")
+        is_verified, matched_item = get_verified_purchase(request.user, product, order_item)
+
+        review = serializer.save(
+            is_verified_purchase=is_verified,
+            order_item=matched_item if matched_item is not None else order_item,
+        )
+
+        if review.status == ProductReview.Status.APPROVED:
+            recalculate_product_rating(review.product_id)
+
+        output_serializer = ProductReviewSerializer(review, context={"request": request})
+        return success_response(
+            data=output_serializer.data,
+            message="Review submitted successfully",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    def patch(self, request, pk=None):
+        review_id = pk or request.query_params.get("id") or request.query_params.get("pk")
+        if not review_id:
+            return error_response(
+                message="Review ID is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if not request.user.is_authenticated:
+            return error_response(
+                message="Authentication required",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        review = self._get_review(review_id)
+        if not self._can_manage(request.user, review):
+            return error_response(
+                message="Permission denied",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        data = request.data.copy()
+        is_staff = self._is_staff_or_admin(request.user)
+
+        if not is_staff:
+            data.pop("status", None)
+            data.pop("admin_reply", None)
+        elif "admin_reply" in data and data["admin_reply"]:
+            review.replied_at = timezone.now()
+
+        serializer = ProductReviewSerializer(
+            review,
+            data=data,
+            partial=True,
+            context={"request": request},
+        )
+        if not serializer.is_valid():
+            return error_response(
+                errors=serializer.errors,
+                message="Validation failed",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        target_product = serializer.validated_data.get("product", review.product)
+        target_order_item = serializer.validated_data.get("order_item", review.order_item)
+        is_verified, matched_item = get_verified_purchase(
+            review.user, target_product, target_order_item
+        )
+
+        extra_kwargs = {"is_verified_purchase": is_verified}
+        if matched_item is not None:
+            extra_kwargs["order_item"] = matched_item
+
+        updated_review = serializer.save(**extra_kwargs)
+        recalculate_product_rating(updated_review.product_id)
+
+        output_serializer = ProductReviewSerializer(updated_review, context={"request": request})
+        return success_response(data=output_serializer.data, message="Review updated successfully")
+
+    def delete(self, request, pk=None):
+        review_id = pk or request.query_params.get("id") or request.query_params.get("pk")
+        if not review_id:
+            return error_response(
+                message="Review ID is required",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        if not request.user.is_authenticated:
+            return error_response(
+                message="Authentication required",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        review = self._get_review(review_id)
+        if not self._can_manage(request.user, review):
+            return error_response(
+                message="Permission denied",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        product_id = review.product_id
+        review.delete()
+        recalculate_product_rating(product_id)
+        return success_response(message="Review deleted successfully")
+class MyReviewsView(APIView):
+    """
+    GET /api/reviews/my/?product=1&rating=5&search=...
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        queryset = (
+            ProductReview.objects.filter(user=request.user)
+            .select_related("product", "order_item")
+            .prefetch_related("images")
+        )
+
+        queryset = apply_search_and_filters(
+            queryset,
+            request,
+            search_fields=["title", "comment", "product__name"],
+            filter_fields={
+                "product": "product_id",
+                "rating": "rating",
+                "status": "status",
+                "verified": "is_verified_purchase",
+            },
+        )
+
+        paginator = StandardPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        serializer = ProductReviewSerializer(page, many=True, context={"request": request})
+        return paginator.get_paginated_response(
+            serializer.data,
+            message="Your reviews retrieved successfully",
         )

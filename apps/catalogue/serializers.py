@@ -339,3 +339,69 @@ class LowStockProductSerializer(serializers.ModelSerializer):
 
     def get_stock_status(self, obj):
         return "OUT_OF_STOCK" if obj.stock_quantity == 0 else "LOW_STOCK"
+
+
+class ReviewImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReviewImage
+        fields = ["id", "image"]
+
+
+class ProductReviewSerializer(serializers.ModelSerializer):
+    images = ReviewImageSerializer(many=True, read_only=True)
+    uploaded_images = serializers.ListField(
+        child=serializers.ImageField(),
+        write_only=True,
+        required=False,
+    )
+    user_name = serializers.CharField(source="user.full_name", read_only=True)
+
+    class Meta:
+        model = ProductReview
+        fields = [
+            "id",
+            "product",
+            "user",
+            "user_name",
+            "order_item",
+            "rating",
+            "title",
+            "comment",
+            "is_verified_purchase",
+            "status",
+            "admin_reply",
+            "replied_at",
+            "images",
+            "uploaded_images",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "user",
+            "is_verified_purchase",
+            "status",
+            "replied_at",
+            "created_at",
+        ]
+
+    @transaction.atomic
+    def create(self, validated_data):
+        uploaded_images = validated_data.pop("uploaded_images", [])
+        validated_data["user"] = self.context["request"].user
+
+        review = ProductReview.objects.create(**validated_data)
+        for img in uploaded_images:
+            ReviewImage.objects.create(review=review, image=img)
+        return review
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        uploaded_images = validated_data.pop("uploaded_images", [])
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        for img in uploaded_images:
+            ReviewImage.objects.create(review=instance, image=img)
+        return instance
