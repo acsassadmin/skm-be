@@ -802,6 +802,7 @@ class ProductReviewView(APIView):
             "product": "product_id",
             "rating": "rating",
             "verified": "is_verified_purchase",
+            "id":"id",
         }
         if is_staff:
             filter_fields["status"] = "status"
