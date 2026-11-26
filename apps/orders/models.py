@@ -136,6 +136,7 @@ class Order(models.Model):
 
     class PaymentStatus(models.TextChoices):
         PENDING = "PENDING", "Pending"
+        INITIATE = "INITIATE", "Initiate"
         PAID = "PAID", "Paid"
         FAILED = "FAILED", "Failed"
         REFUNDED = "REFUNDED", "Refunded"
@@ -400,3 +401,4 @@ class Refund(models.Model):
 
     def __str__(self):
         return f"{self.refund_number} ({self.order.order_number} - {self.amount})"
+    

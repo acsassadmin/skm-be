@@ -14,3 +14,4 @@ class CacheKeys:
     COUPONS = "coupons"
     LOW_STOCK_ALERTS = "low_stock_alerts"
     SALES_REPORTS = "sales_reports"
+    PAYMENT_SETTINGS = "payment_settings"

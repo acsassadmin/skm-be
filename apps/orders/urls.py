@@ -12,5 +12,7 @@ urlpatterns = [
     path("refunds/", RefundView.as_view(), name="refunds"),
     path("reports/sales/", SalesAnalyticsReportView.as_view(), name="sales-analytics-report"),
     path("reports/sales/export/", SalesReportExportView.as_view(), name="sales-report-export"),
+    
+    
 
 ]

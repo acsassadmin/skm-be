@@ -37,6 +37,7 @@ class ProductSerializer(serializers.ModelSerializer):
     applicable_price = serializers.SerializerMethodField()
 
     # Write-only nested media inputs (for form-data POST / PUT)
+    remove_thumbnail = serializers.BooleanField(write_only=True, required=False, default=False)
     uploaded_images = serializers.ListField(
         child=serializers.ImageField(),
         write_only=True,
@@ -84,24 +85,7 @@ class ProductSerializer(serializers.ModelSerializer):
             return str(obj.dealer_price)
         return str(obj.customer_price)
 
-    # def to_representation(self, instance):
-    #     data = super().to_representation(instance)
-    #     request = self.context.get("request")
-    #     user = getattr(request, "user", None)
-
-    #     # Hide wholesale dealer_price from public visitors & non-dealers (except ADMIN)
-    #     can_see_dealer = bool(
-    #         user
-    #         and user.is_authenticated
-    #         and (
-    #             user.is_superuser
-    #             or user.has_role("ADMIN")
-    #             or (user.is_approved and user.has_role("DEALER"))
-    #         )
-    #     )
-    #     if not can_see_dealer:
-    #         data.pop("dealer_price", None)
-    #     return data
+   
     def to_representation(self, instance):
         data = super().to_representation(instance)
         specs = data.get("specifications")
@@ -152,10 +136,14 @@ class ProductSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         uploaded_images = validated_data.pop("uploaded_images", [])
         uploaded_videos = validated_data.pop("uploaded_videos", [])
+        remove_thumbnail = validated_data.pop("remove_thumbnail", False)
         video_urls = validated_data.pop("video_urls", [])
         delete_image_ids = validated_data.pop("delete_image_ids", [])
         delete_video_ids = validated_data.pop("delete_video_ids", [])
-
+        if remove_thumbnail and "thumbnail_image" not in validated_data:
+            if instance.thumbnail_image:
+                instance.thumbnail_image.delete(save=False)
+            instance.thumbnail_image = None
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()

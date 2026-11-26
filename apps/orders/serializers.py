@@ -4,6 +4,8 @@ from catalogue.models import Product
 from django.db import transaction
 from .models import Cart, CartItem, Coupon, Order, OrderItem, Refund,ReturnItem,ReturnRequest
 from .services.cart_service import is_user_dealer, calculate_coupon_discount
+from rest_framework import serializers
+
 
 
 class CouponSerializer(serializers.ModelSerializer):
@@ -31,6 +33,7 @@ class CouponSerializer(serializers.ModelSerializer):
 class CartItemSerializer(serializers.ModelSerializer):
     product_id = serializers.IntegerField(source="product.id", read_only=True)
     product_name = serializers.CharField(source="product.name", read_only=True)
+    thumbnail_image = serializers.ImageField(source="product.thumbnail_image", read_only=True)
     sku = serializers.CharField(source="product.sku", read_only=True)
     stock_quantity = serializers.IntegerField(source="product.stock_quantity", read_only=True)
     gst_rate = serializers.DecimalField(
@@ -59,6 +62,7 @@ class CartItemSerializer(serializers.ModelSerializer):
             "line_subtotal",
             "line_gst",
             "line_total",
+            "thumbnail_image"
         ]
 
     def _is_dealer(self):
@@ -438,3 +442,5 @@ class RefundSerializer(serializers.ModelSerializer):
             attrs["amount"] = subtotal + tax
 
         return attrs
+
+

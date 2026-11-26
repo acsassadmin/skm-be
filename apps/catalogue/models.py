@@ -38,7 +38,11 @@ class Product(models.Model):
     sku = models.CharField(max_length=60, unique=True, db_index=True)
     hsn_code = models.CharField(max_length=20, blank=True)
     brand = models.CharField(max_length=100, blank=True)
-
+    thumbnail_image = models.ImageField(
+        upload_to="products/thumbnails/",
+        blank=True,
+        null=True,
+    )
     short_description = models.CharField(max_length=300, blank=True)
     description = models.TextField()
     specifications = models.JSONField(default=list, blank=True)
