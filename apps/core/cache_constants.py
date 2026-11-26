@@ -11,6 +11,7 @@ class CacheKeys:
     PRODUCTS = "products"
     CATEGORIES = "categories"
     PERMISSIONS = "permissions"
+    ROLES = "roles"
     COUPONS = "coupons"
     LOW_STOCK_ALERTS = "low_stock_alerts"
     SALES_REPORTS = "sales_reports"

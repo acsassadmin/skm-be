@@ -122,7 +122,7 @@ class PaymentService:
         txn.payer_upi_or_mobile = payer_upi_or_mobile.strip()
         if payment_screenshot:
             txn.payment_screenshot = payment_screenshot
-        txn.status = PaymentTransaction.Status.SUBMITTED
+        txn.status = PaymentTransaction.Status.PENDING_VERIFICATION
         txn.save()
         txn.order.payment_status=Order.PaymentStatus.PENDING_VERIFICATION
         txn.order.save(update_fields=["payment_status", "updated_at"])

@@ -1,0 +1,47 @@
+{% extends "emails/base.html" %}
+{% block title %}SKM Electronics - Account Status Update{% endblock %}
+
+{% block content %}
+  <h2 style="margin: 0 0 12px; font-size: 19px; color: #0f172a;">
+    {% if is_active %}Account Activated{% else %}Account Deactivated{% endif %}
+  </h2>
+  <p style="margin: 0 0 14px;">Dear {{ full_name|default:"User" }},</p>
+
+  {% if is_active %}
+    <p style="margin: 0 0 18px;">
+      Your account on <strong>SKM Electronics</strong> has been <strong>activated</strong>.
+      You now have full access to sign in and manage your orders.
+    </p>
+    <div style="margin: 18px 0; text-align: center;">
+      <span style="display: inline-block; padding: 8px 20px; font-size: 13px; font-weight: 700;
+                   letter-spacing: 1.5px; color: #059669; background-color: #ecfdf5;
+                   border: 1px solid #a7f3d0; border-radius: 6px;">
+        ACTIVE
+      </span>
+    </div>
+    {% if login_url %}
+      <div style="margin: 22px 0; text-align: center;">
+        <a href="{{ login_url }}"
+           style="display: inline-block; padding: 12px 26px; background-color: #0f172a;
+                  color: #ffffff; text-decoration: none; font-weight: 600; font-size: 14px; border-radius: 8px;">
+          Go to SKM Electronics
+        </a>
+      </div>
+    {% endif %}
+  {% else %}
+    <p style="margin: 0 0 18px;">
+      Your account on <strong>SKM Electronics</strong> has been <strong>deactivated</strong> by an administrator.
+      Sign-in access is currently suspended.
+    </p>
+    <div style="margin: 18px 0; text-align: center;">
+      <span style="display: inline-block; padding: 8px 20px; font-size: 13px; font-weight: 700;
+                   letter-spacing: 1.5px; color: #dc2626; background-color: #fef2f2;
+                   border: 1px solid #fecaca; border-radius: 6px;">
+        INACTIVE
+      </span>
+    </div>
+    <p style="margin: 0; font-size: 13px; color: #64748b;">
+      Please reach out to SKM Electronics support if you need assistance reactivating your account.
+    </p>
+  {% endif %}
+{% endblock %}
