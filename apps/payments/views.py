@@ -252,14 +252,15 @@ class PaymentTransactionView(APIView):
         many=True,
     )
     def get(self, request):
-        has_staff_access = HasModulePermission.for_module("Orders", "is_view").has_permission(
-            request, self
-        )
+        # has_staff_access = HasModulePermission.for_module("Orders", "is_view").has_permission(
+        #     request, self
+        # )
         base_qs = PaymentTransaction.objects.select_related("order", "user", "verified_by")
-        if not has_staff_access:
-            base_qs = base_qs.filter(user=request.user)
+        # if not has_staff_access:
+        #     base_qs = base_qs.filter(user=request.user)
 
         txn_id = request.query_params.get("id")
+        
         if txn_id:
             txn = base_qs.filter(id=txn_id).first()
             if not txn:
@@ -287,6 +288,7 @@ class PaymentTransactionView(APIView):
                 "status": "status",
                 "gateway": "gateway",
                 "order_number": "order__order_number",
+                "order_id": "order_id",
             },
         )
 

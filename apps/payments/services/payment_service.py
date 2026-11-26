@@ -29,7 +29,7 @@ class PaymentService:
         order: Order, user, gateway: str = PaymentTransaction.Gateway.MANUAL_UPI
     ) -> dict:
         setting = PaymentService.get_active_setting()
-
+        
         if gateway == PaymentTransaction.Gateway.MANUAL_UPI:
             if setting and not setting.is_manual_upi_enabled:
                 raise ValidationError("Manual UPI payment is currently disabled.")
@@ -44,6 +44,8 @@ class PaymentService:
             status=PaymentTransaction.Status.PENDING,
             amount=order.total_amount,
         )
+        order.payment_status=order.PaymentStatus.INITIATE
+        order.save(update_fields=["payment_status", "updated_at"])
 
         if gateway == PaymentTransaction.Gateway.MANUAL_UPI:
             return {
@@ -51,6 +53,7 @@ class PaymentService:
                 "order_number": order.order_number,
                 "gateway": txn.gateway,
                 "status": txn.status,
+                "payment_status": order.payment_status,
                 "amount": str(txn.amount),
                 "payment_details": {
                     "label": setting.label if setting else "SKM Electronics UPI",
@@ -121,6 +124,8 @@ class PaymentService:
             txn.payment_screenshot = payment_screenshot
         txn.status = PaymentTransaction.Status.SUBMITTED
         txn.save()
+        txn.order.payment_status=Order.PaymentStatus.PENDING_VERIFICATION
+        txn.order.save(update_fields=["payment_status", "updated_at"])
         return txn
 
     @staticmethod

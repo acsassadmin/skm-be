@@ -9,8 +9,27 @@ User = get_user_model()
 class RoleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Role
-        fields = ["id", "name", "code", "description", "requires_approval", "is_active", "created_at"]
+        fields = "__all__"
         read_only_fields = ["id", "created_at"]
+    def validate(self, attrs):
+        name = attrs.get("name", getattr(self.instance, "name", ""))
+        raw_code = attrs.get("code")
+        generated_code = (
+            raw_code.strip().replace("-", "_").upper()
+            if raw_code
+            else slugify(name).replace("-", "_").upper()[:50]
+        )
+        if not generated_code:
+            raise serializers.ValidationError({"name": "Unable to generate a valid role code from name."})
+
+        qs = Role.objects.filter(code=generated_code)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError({"code": f"Role with code '{generated_code}' already exists."})
+
+        attrs["code"] = generated_code
+        return attrs
 class ModuleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Module
@@ -83,15 +102,52 @@ class RegisterSerializer(serializers.ModelSerializer):
         except Role.DoesNotExist:
             raise serializers.ValidationError(f"Role '{code}' does not exist or is inactive.")
 
-    def create(self, validated_data):
-        role_obj = validated_data.pop("role_code")
-        password = validated_data.pop("password")
+    # def create(self, validated_data):
+    #     role_obj = validated_data.pop("role_code")
+    #     password = validated_data.pop("password")
 
-        user = User(**validated_data)
-        user.is_approved = not role_obj.requires_approval
-        user.set_password(password)
-        user.save()
-        user.roles.add(role_obj)
+    #     user = User(**validated_data)
+    #     user.is_approved = not role_obj.requires_approval
+    #     user.set_password(password)
+    #     user.save()
+    #     user.roles.add(role_obj)
+    #     return user
+    def create(self, validated_data):
+        role_code = validated_data.pop("role_code", "CUSTOMER").upper()
+        company_name = validated_data.pop("company_name", "").strip()
+        gstin = validated_data.pop("gstin", "").strip()
+        address_line = validated_data.pop("address_line", "").strip()
+        city = validated_data.pop("city", "").strip()
+        state = validated_data.pop("state", "").strip()
+        pincode = validated_data.pop("pincode", "").strip()
+
+        role = Role.objects.get(code=role_code, is_active=True, is_self_registerable=True)
+        user = User.objects.create_user(
+            username=validated_data["email"],
+            email=validated_data["email"],
+            phone=validated_data.get("phone", ""),
+            full_name=validated_data["full_name"],
+            password=validated_data["password"],
+            is_approved=not role.requires_approval,  # False for DEALER/FACULTY, True for CUSTOMER
+        )
+        user.roles.add(role)
+
+        # Auto-create default UserAddress if address/business details were provided at signup
+        if address_line and city and state and pincode:
+            UserAddress.objects.create(
+                user=user,
+                address_type=UserAddress.AddressType.OFFICE if role_code == "DEALER" else UserAddress.AddressType.HOME,
+                full_name=user.full_name,
+                phone=user.phone,
+                company_name=company_name,
+                gstin=gstin,
+                address_line=address_line,
+                city=city,
+                state=state,
+                pincode=pincode,
+                is_default=True,
+            )
+
         return user
 
 

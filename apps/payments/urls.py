@@ -13,4 +13,5 @@ urlpatterns = [
     path("submit-proof/", SubmitPaymentProofView.as_view(), name="payment-submit-proof"),
     path("transactions/", PaymentTransactionView.as_view(), name="payment-transactions"),
     path("verify/", AdminVerifyPaymentView.as_view(), name="payment-verify"),
+    
 ]

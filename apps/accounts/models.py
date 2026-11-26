@@ -3,7 +3,7 @@ from django.db import models
 import secrets
 from datetime import timedelta
 from django.utils import timezone
-
+from django.utils.text import slugify
 class Role(models.Model):
     """
     Dynamic Role table.
@@ -11,14 +11,18 @@ class Role(models.Model):
     Future phase codes: FREELANCER, CONTENT_MANAGER, etc.
     """
     name = models.CharField(max_length=50, unique=True)         
-    code = models.SlugField(max_length=50, unique=True)         
+    code = models.SlugField(max_length=50, unique=True,blank=True)         
     description = models.TextField(blank=True)
     requires_approval = models.BooleanField(default=False)      
+    is_self_registerable = models.BooleanField(default=True) 
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
-        self.code = self.code.upper()
+        if not self.code and self.name:
+            self.code = slugify(self.name).replace("-", "_").upper()[:50]
+        else:
+            self.code = self.code.strip().replace("-", "_").upper()
         super().save(*args, **kwargs)
 
     def __str__(self):

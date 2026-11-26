@@ -86,7 +86,6 @@ def create_order_from_cart(
         coupon=coupon,
         coupon_code=coupon.code if coupon else "",
         is_dealer_order=is_dealer,
-        payment_status=Order.PaymentStatus.INITIATE,
         shipping_full_name=shipping_data.get("shipping_full_name") or user.full_name,
         shipping_phone=shipping_data.get("shipping_phone") or user.phone,
         shipping_address=shipping_data["shipping_address"],

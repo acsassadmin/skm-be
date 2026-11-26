@@ -136,6 +136,7 @@ class Order(models.Model):
 
     class PaymentStatus(models.TextChoices):
         PENDING = "PENDING", "Pending"
+        PENDING_VERIFICATION = "PENDING_VERIFICATION", "Pending Verification"
         INITIATE = "INITIATE", "Initiate"
         PAID = "PAID", "Paid"
         FAILED = "FAILED", "Failed"
