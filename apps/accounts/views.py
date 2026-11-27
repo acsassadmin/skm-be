@@ -15,7 +15,11 @@ from core.schema import auto_schema
 from utils.email_service import (
     send_account_activation_email,
     send_account_approval_email,
+    send_password_reset_email
 )
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.encoding import force_str
+from django.utils.http import urlsafe_base64_decode
 class SendOTPView(APIView):
     permission_classes = [AllowAny]
     @auto_schema(summary="Send OTP",request=SendOTPSerializer,response=SendOTPSerializer)
@@ -843,3 +847,74 @@ class UserAddressView(APIView):
                 next_addr.save(update_fields=["is_default"])
 
         return success_response(message="Address deleted successfully.")
+
+
+class ForgotPasswordAPIView(APIView):
+    """
+    Endpoint: POST /api/auth/forgot-password/
+    Generates a secure cryptographic reset link and sends it to the user's email.
+    """
+    permission_classes = [AllowAny]
+
+    @auto_schema(
+        summary="Request password reset link",
+        request=ForgotPasswordSerializer,
+    )
+    def post(self, request):
+        serializer = ForgotPasswordSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(errors=serializer.errors, message="Validation Failed")
+
+        email = serializer.validated_data["email"]
+        user = User.objects.filter(email__iexact=email, is_active=True).first()
+        if user:
+            send_password_reset_email(user)
+
+        return success_response(
+            data=None,
+            message="If the email matches an active account, a secure reset link has been dispatched.",
+        )
+
+
+class ResetPasswordAPIView(APIView):
+    """
+    Endpoint: POST /api/auth/reset-password/
+    Validates uid + token and updates the user's password.
+    """
+    permission_classes = [AllowAny]
+
+    @auto_schema(
+        summary="Confirm password reset with uid and token",
+        request=ResetPasswordSerializer,
+    )
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(errors=serializer.errors, message="Validation Failed")
+
+        data = serializer.validated_data
+
+        try:
+            user_id = force_str(urlsafe_base64_decode(data["uid"]))
+            user = User.objects.get(pk=user_id, is_active=True)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            return error_response(
+                errors="The reset link contains invalid or corrupted parameters.",
+                message="Invalid Link Parameters",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not default_token_generator.check_token(user, data["token"]):
+            return error_response(
+                errors="This link is invalid or has expired. Please request a new link.",
+                message="Token Validation Error",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(data["new_password"])
+        user.save(update_fields=["password"])
+
+        return success_response(
+            data=None,
+            message="Your account password has been changed successfully. You may now log in.",
+        )

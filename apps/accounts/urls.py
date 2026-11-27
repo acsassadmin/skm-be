@@ -15,4 +15,7 @@ urlpatterns = [
     path("permissions/", UserPermissionsAPIView.as_view(), name="user-permissions"),
     path("role-permissions/", RoleModulePermissionAPIView.as_view(), name="role-module-permissions"),
     path("modules/", ModuleAPIView.as_view(), name="modules"),
+    path("forgot-password/", ForgotPasswordAPIView.as_view(), name="forgot-password"),
+    path("reset-password/", ResetPasswordAPIView.as_view(), name="reset-password"),
+
 ]

@@ -4,6 +4,9 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,24 @@ def send_account_approval_email(
         },
     )
 
+
+def send_password_reset_email(user):
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173").rstrip("/")
+    reset_url = f"{frontend_url}/reset-password?uid={uid}&token={token}"
+
+    user_name = getattr(user, "full_name", "") or user.get_full_name() or user.email
+
+    send_template_email(
+        recipient=user.email,
+        subject="Reset Your SKM Electronics Password",
+        template_name="emails/password_reset.html",
+        context={
+            "user_name": user_name,
+            "reset_url": reset_url,
+        },
+    )
 
 def send_account_activation_email(
     recipient: str,
