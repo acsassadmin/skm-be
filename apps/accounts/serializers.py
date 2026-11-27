@@ -114,7 +114,10 @@ class RegisterSerializer(serializers.ModelSerializer):
     #     user.roles.add(role_obj)
     #     return user
     def create(self, validated_data):
-        role_code = validated_data.pop("role_code", "CUSTOMER").upper()
+        # role_code = validated_data.pop("role_code", "CUSTOMER").upper()
+        role_val = validated_data.pop("role_code", "CUSTOMER")
+        # role_code = validated_data.pop("role_code", "CUSTOMER").upper()
+        role_code = (role_val.code if hasattr(role_val, "code") else str(role_val)).upper()
         company_name = validated_data.pop("company_name", "").strip()
         gstin = validated_data.pop("gstin", "").strip()
         address_line = validated_data.pop("address_line", "").strip()
