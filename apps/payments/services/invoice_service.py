@@ -15,7 +15,7 @@ from payments.models import Invoice, InvoiceConfiguration
 from decimal import Decimal, ROUND_HALF_UP
 from io import BytesIO
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER
+from reportlab.lib.enums import TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle

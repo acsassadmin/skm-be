@@ -1,13 +1,5 @@
 from django.urls import path
-from payments.views import (
-    PaymentSettingView,
-    InitiatePaymentView,
-    SubmitPaymentProofView,
-    PaymentTransactionView,
-    AdminVerifyPaymentView,
-    InvoiceConfigurationView,
-    PaymentInvoiceView
-)
+from payments.views import *
 
 urlpatterns = [
     path("settings/", PaymentSettingView.as_view(), name="payment-settings"),
@@ -17,5 +9,4 @@ urlpatterns = [
     path("verify/", AdminVerifyPaymentView.as_view(), name="payment-verify"),
     path("invoice-settings/", InvoiceConfigurationView.as_view(), name="payment-invoice-settings"),
     path("invoices/<str:order_number>/", PaymentInvoiceView.as_view(), name="payment-invoice"),
-    
 ]
