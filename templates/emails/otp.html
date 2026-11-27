@@ -1,0 +1,23 @@
+{% extends "emails/base.html" %}
+{% block title %}SKM Electronics - Verification OTP{% endblock %}
+
+{% block content %}
+  <h2 style="margin: 0 0 12px; font-size: 19px; color: #0f172a;">{{ purpose }} One-Time Password</h2>
+  <p style="margin: 0 0 14px;">Hello,</p>
+  <p style="margin: 0 0 18px;">
+    Use the following One-Time Password (OTP) to complete your verification on
+    <strong>SKM Electronics</strong>:
+  </p>
+
+  <div style="margin: 20px 0; text-align: center;">
+    <span style="display: inline-block; padding: 12px 26px; font-size: 22px; font-weight: 700;
+                 letter-spacing: 4px; color: #0f172a; background-color: #f1f5f9;
+                 border: 1px solid #cbd5e1; border-radius: 8px; font-family: monospace;">
+      {{ otp_code }}
+    </span>
+  </div>
+
+  <p style="margin: 16px 0 0; font-size: 12px; color: #64748b;">
+    This OTP is valid for 10 minutes. For your security, never share this code with anyone.
+  </p>
+{% endblock %}

@@ -67,6 +67,7 @@ class PaymentTransaction(models.Model):
 
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending Payment"
+        PENDING_VERIFICATION="PENDING_VERIFICATION", "Pending Verification"
         SUBMITTED = "SUBMITTED", "Proof Submitted (Awaiting Verification)"
         VERIFIED = "VERIFIED", "Verified / Paid"
         REJECTED = "REJECTED", "Rejected / Failed"

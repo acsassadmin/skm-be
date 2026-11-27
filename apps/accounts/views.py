@@ -12,6 +12,10 @@ from django.utils import timezone
 from core.cache_constants import *
 from core.cache_hooks import *
 from core.schema import auto_schema
+from utils.email_service import (
+    send_account_activation_email,
+    send_account_approval_email,
+)
 class SendOTPView(APIView):
     permission_classes = [AllowAny]
     @auto_schema(summary="Send OTP",request=SendOTPSerializer,response=SendOTPSerializer)
@@ -168,7 +172,7 @@ class RoleView(APIView):
         response=RoleSerializer,
         many=True,
     )
-    @CacheHook.cache_api_response(namespace=CacheKeys.PERMISSIONS, timeout=CacheTTL.SHORT)
+    @CacheHook.cache_api_response(namespace=CacheKeys.ROLES, timeout=CacheTTL.SHORT)
     def get(self, request):
         role_id = request.query_params.get("id")
 
@@ -213,7 +217,7 @@ class RoleView(APIView):
             )
 
         serializer.save()
-        CacheHook.bump_version(CacheKeys.PERMISSIONS)
+        CacheHook.bump_version(CacheKeys.ROLES)
         return success_response(
             data=serializer.data,
             message="Role created successfully.",
@@ -253,7 +257,7 @@ class RoleView(APIView):
             )
 
         serializer.save()
-        CacheHook.bump_version(CacheKeys.PERMISSIONS)
+        CacheHook.bump_version(CacheKeys.ROLES)
         return success_response(
             data=serializer.data,
             message="Role updated successfully.",
@@ -275,7 +279,7 @@ class RoleView(APIView):
         try:
             obj = Role.objects.get(id=role_id)
             obj.delete()
-            CacheHook.bump_version(CacheKeys.PERMISSIONS)
+            CacheHook.bump_version(CacheKeys.ROLES)
             return success_response(
                 message="Role deleted successfully.",
                 status_code=status.HTTP_200_OK,
@@ -490,19 +494,52 @@ class RoleModulePermissionAPIView(APIView):
         request=RoleModulePermissionSerializer,
         response=RoleModulePermissionSerializer,
     )
+    # def post(self, request):
+    #     try:
+    #         serializer = RoleModulePermissionSerializer(data=request.data)
+    #         serializer.is_valid(raise_exception=True)
+    #         serializer.save()
+    #         CacheHook.bump_version(CacheKeys.PERMISSIONS)
+    #         return success_response(
+    #             data=serializer.data,
+    #             message="Role module permission created.",
+    #             status_code=status.HTTP_201_CREATED,
+    #         )
+    #     except ValidationError as e:
+    #         return error_response(errors=e.detail, message="Validation failed.")
     def post(self, request):
-        try:
-            serializer = RoleModulePermissionSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            CacheHook.bump_version(CacheKeys.PERMISSIONS)
-            return success_response(
-                data=serializer.data,
-                message="Role module permission created.",
-                status_code=status.HTTP_201_CREATED,
+        role_id = request.data.get("role")
+        module_id = request.data.get("module")
+        if not role_id or not module_id:
+            return error_response(
+                errors={"detail": "Both 'role' and 'module' are required."},
+                message="Validation failed.",
+                status_code=status.HTTP_400_BAD_REQUEST,
             )
+
+        instance = RoleModulePermission.objects.filter(
+            role_id=role_id, module_id=module_id
+        ).first()
+
+        serializer = RoleModulePermissionSerializer(
+            instance, data=request.data, partial=bool(instance)
+        )
+        try:
+            serializer.is_valid(raise_exception=True)
         except ValidationError as e:
-            return error_response(errors=e.detail, message="Validation failed.")
+            return error_response(
+                errors=e.detail,
+                message="Validation failed.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer.save()
+        CacheHook.bump_version(CacheKeys.PERMISSIONS)
+        return success_response(
+            data=serializer.data,
+            message="Role permissions saved successfully.",
+            status_code=status.HTTP_200_OK if instance else status.HTTP_201_CREATED,
+        )
     @auto_schema(
         summary="Update role-module permission flags",
         params={"id*": int},
@@ -553,10 +590,11 @@ class UserView(APIView):
     )
     def get(self, request):
         user_id = request.query_params.get("id")
+        base_qs = User.objects.prefetch_related("roles", "addresses").order_by("-date_joined")
 
         if user_id:
             try:
-                obj = User.objects.select_related("role").get(id=user_id)
+                obj = base_qs.get(id=user_id)
                 serializer = UserSerializer(obj)
                 return success_response(
                     data=serializer.data,
@@ -569,8 +607,16 @@ class UserView(APIView):
                     status_code=status.HTTP_404_NOT_FOUND,
                 )
 
-        queryset = User.objects.select_related("role").all().order_by("-date_joined")
-        serializer = UserSerializer(queryset, many=True)
+        role_code = request.query_params.get("role")
+        is_approved = request.query_params.get("is_approved")
+
+        queryset = base_qs
+        if role_code:
+            queryset = queryset.filter(roles__code=role_code.upper())
+        if is_approved is not None and is_approved != "":
+            queryset = queryset.filter(is_approved=is_approved.lower() == "true")
+
+        serializer = UserSerializer(queryset.distinct(), many=True)
         return success_response(
             data=serializer.data,
             message="Users retrieved successfully.",
@@ -612,17 +658,20 @@ class UserView(APIView):
         user_id = request.query_params.get("id")
         if not user_id:
             return error_response(
-                message="ID parameter is required for update.",
+                errors={"id": "Query parameter ?id= is required."},
+                message="User ID is required.",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
-            obj = User.objects.select_related("role").get(id=user_id)
+            obj = User.objects.prefetch_related("roles", "addresses").get(id=user_id)
         except User.DoesNotExist:
             return error_response(
                 message="User not found.",
                 status_code=status.HTTP_404_NOT_FOUND,
             )
+        old_approved = obj.is_approved
+        old_active = obj.is_active
 
         serializer = UserSerializer(obj, data=request.data, partial=True)
         try:
@@ -634,7 +683,24 @@ class UserView(APIView):
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
 
-        serializer.save()
+        updated_user = serializer.save()
+
+        if updated_user.is_approved != old_approved:
+            primary_role = updated_user.roles.first()
+            role_label = primary_role.name.title() if primary_role else "Account"
+            send_account_approval_email(
+                recipient=updated_user.email,
+                full_name=updated_user.full_name,
+                is_approved=updated_user.is_approved,
+                role_name=role_label,
+            )
+
+        if updated_user.is_active != old_active:
+            send_account_activation_email(
+                recipient=updated_user.email,
+                full_name=updated_user.full_name,
+                is_active=updated_user.is_active,
+            )
         return success_response(
             data=serializer.data,
             message="User updated successfully.",
