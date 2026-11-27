@@ -209,57 +209,6 @@ class WarrantyClaimSerializer(serializers.ModelSerializer):
             )
         return attrs
 
-class WarrantySerializer(serializers.ModelSerializer):
-    product_name = serializers.CharField(source="product.name", read_only=True)
-    product_sku = serializers.CharField(source="product.sku", read_only=True)
-    order_number = serializers.CharField(
-        source="order_item.order.order_number",
-        read_only=True,
-        default=None,
-    )
-
-    class Meta:
-        model = Warranty
-        fields = "__all__"
-        
-        read_only_fields = ["id", "created_at", "updated_at"]
-
-    def validate(self, attrs):
-        start_date = attrs.get("start_date", getattr(self.instance, "start_date", None))
-        end_date = attrs.get("end_date", getattr(self.instance, "end_date", None))
-        if start_date and end_date and end_date < start_date:
-            raise serializers.ValidationError("end_date cannot be earlier than start_date.")
-        return attrs
-
-
-class WarrantyClaimSerializer(serializers.ModelSerializer):
-    warranty_serial = serializers.CharField(
-        source="warranty.serial_number",
-        read_only=True,
-    )
-    product_sku = serializers.CharField(
-        source="warranty.product.sku",
-        read_only=True,
-    )
-
-    class Meta:
-        model = WarrantyClaim
-        fields = "__all__"
-        
-        read_only_fields = ["id", "claim_number", "reported_at"]
-
-    def validate(self, attrs):
-        resolution = attrs.get("resolution", getattr(self.instance, "resolution", None))
-        replacement_serial = attrs.get(
-            "replacement_serial",
-            getattr(self.instance, "replacement_serial", ""),
-        )
-        if resolution == WarrantyClaim.Resolution.REPLACED and not replacement_serial:
-            raise serializers.ValidationError(
-                "replacement_serial is required when resolution is REPLACED."
-            )
-        return attrs
-
 
 class InventoryLogSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
