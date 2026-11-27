@@ -6,6 +6,7 @@ from rest_framework.exceptions import ValidationError
 
 from core.cache_constants import  CacheKeys, CacheTTL
 from core.cache_hooks import CacheHook
+from django.http import HttpResponse
 from utils.pagination import StandardPagination
 from utils.permissions import HasModulePermission
 from utils.responses import success_response, error_response
@@ -13,16 +14,10 @@ from core.schema import auto_schema
 from utils.filters import apply_search_and_filters
 
 from orders.models import Order
-from payments.models import PaymentSetting, PaymentTransaction
-from payments.serializers import (
-    PaymentSettingPublicSerializer,
-    PaymentSettingAdminSerializer,
-    InitiatePaymentSerializer,
-    SubmitPaymentProofSerializer,
-    AdminVerifyPaymentSerializer,
-    PaymentTransactionSerializer,
-)
-from payments.services.payment_service import PaymentService
+from .models import *
+from .serializers import *
+from .services.payment_service import PaymentService
+from .services.invoice_service import InvoiceService
 
 
 class PaymentSettingView(APIView):
@@ -255,7 +250,7 @@ class PaymentTransactionView(APIView):
         # has_staff_access = HasModulePermission.for_module("Orders", "is_view").has_permission(
         #     request, self
         # )
-        base_qs = PaymentTransaction.objects.select_related("order", "user", "verified_by")
+        base_qs = PaymentTransaction.objects.select_related("order", "user", "verified_by", "invoice")
         # if not has_staff_access:
         #     base_qs = base_qs.filter(user=request.user)
 
@@ -354,3 +349,184 @@ class AdminVerifyPaymentView(APIView):
             message=f"Payment transaction {action_label} successfully.",
             status_code=status.HTTP_200_OK,
         )
+        
+
+class InvoiceConfigurationView(APIView):
+    """
+    GET  /api/payments/invoice-settings/ -> Get agreed GST & Non-GST invoice settings
+    POST /api/payments/invoice-settings/ -> Create/initialize invoice settings
+    PUT  /api/payments/invoice-settings/ -> Update invoice settings
+    """
+
+    def get_permissions(self):
+        method_map = {
+            "GET": [IsAuthenticated()],
+            "POST": [IsAuthenticated(), HasModulePermission.for_module("Orders", "is_upload")()],
+            "PUT": [IsAuthenticated(), HasModulePermission.for_module("Orders", "is_update")()],
+        }
+        return method_map.get(self.request.method, [IsAuthenticated()])
+
+    @auto_schema(
+        summary="Get active invoice configuration (GSTIN, prefixes, company details)",
+        response=InvoiceConfigurationSerializer,
+    )
+    def get(self, request):
+        config, _ = InvoiceConfiguration.objects.get_or_create(id=1)
+        return success_response(
+            data=InvoiceConfigurationSerializer(config).data,
+            message="Invoice configuration fetched successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+
+    @auto_schema(
+        summary="Create or save initial invoice configuration",
+        request=InvoiceConfigurationSerializer,
+        response=InvoiceConfigurationSerializer,
+    )
+    def post(self, request):
+        config, _ = InvoiceConfiguration.objects.get_or_create(id=1)
+        serializer = InvoiceConfigurationSerializer(config, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid invoice configuration data.",
+                errors=serializer.errors,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        config = serializer.save(updated_by=request.user)
+        return success_response(
+            data=InvoiceConfigurationSerializer(config).data,
+            message="Invoice configuration saved successfully.",
+            status_code=status.HTTP_201_CREATED,
+        )
+
+    @auto_schema(
+        summary="Update invoice configuration",
+        request=InvoiceConfigurationSerializer,
+        response=InvoiceConfigurationSerializer,
+    )
+    def put(self, request):
+        config, _ = InvoiceConfiguration.objects.get_or_create(id=1)
+        serializer = InvoiceConfigurationSerializer(config, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid invoice configuration data.",
+                errors=serializer.errors,
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        config = serializer.save(updated_by=request.user)
+        return success_response(
+            data=InvoiceConfigurationSerializer(config).data,
+            message="Invoice configuration updated successfully.",
+            status_code=status.HTTP_200_OK,
+        )
+
+
+class PaymentInvoiceView(APIView):
+    """
+    POST /api/payments/invoices/<order_number>/ -> Customer chooses With/Without GST post-payment & downloads PDF
+    GET  /api/payments/invoices/<order_number>/ -> Re-download locked invoice PDF (or metadata if ?format=json)
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _get_verified_order_and_txn(self, request, order_number):
+        order = (
+            Order.objects.prefetch_related("items")
+            .filter(order_number=order_number)
+            .first()
+        )
+        if not order:
+            return None, None, error_response(
+                message="Order not found.",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not request.user.is_staff and order.user != request.user:
+            return None, None, error_response(
+                message="You do not have permission to access this invoice.",
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        verified_txn = (
+            PaymentTransaction.objects.filter(
+                order=order,
+                status=PaymentTransaction.Status.VERIFIED,
+            )
+            .order_by("-verified_at", "-created_at")
+            .first()
+        )
+
+        if not verified_txn and order.payment_status != Order.PaymentStatus.PAID:
+            return None, None, error_response(
+                message="Invoice can only be generated after payment is verified.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return order, verified_txn, None
+
+    def _build_pdf_response(self, invoice):
+        pdf_buffer = InvoiceService.build_invoice_pdf_buffer(invoice)
+        safe_filename = invoice.invoice_number.replace("/", "_")
+        response = HttpResponse(pdf_buffer.getvalue(), content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{safe_filename}.pdf"'
+        return response
+
+    @auto_schema(
+        summary="Generate invoice post-payment (With or Without GST) and download PDF",
+        request=InvoiceGenerateSerializer,
+    )
+    def post(self, request, order_number):
+        order, verified_txn, err = self._get_verified_order_and_txn(request, order_number)
+        if err:
+            return err
+
+        invoice = Invoice.objects.filter(order=order).first()
+        if not invoice:
+            serializer = InvoiceGenerateSerializer(data=request.data)
+            if not serializer.is_valid():
+                return error_response(
+                    message="Invalid invoice generation request.",
+                    errors=serializer.errors,
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+
+            try:
+                invoice = InvoiceService.create_or_get_invoice(
+                    order=order,
+                    transaction=verified_txn,
+                    is_gst=serializer.validated_data["is_gst"],
+                    buyer_gstin=serializer.validated_data["buyer_gstin"],
+                    buyer_company_name=serializer.validated_data["buyer_company_name"],
+                )
+            except ValidationError as exc:
+                msg = exc.detail[0] if isinstance(exc.detail, list) else str(exc.detail)
+                return error_response(message=msg, status_code=status.HTTP_400_BAD_REQUEST)
+
+        return self._build_pdf_response(invoice)
+
+    @auto_schema(
+        summary="Download already-generated invoice PDF (or pass ?format=json for metadata)",
+        params={"format": str},
+    )
+    def get(self, request, order_number):
+        order, _, err = self._get_verified_order_and_txn(request, order_number)
+        if err:
+            return err
+
+        invoice = Invoice.objects.filter(order=order).first()
+        if not invoice:
+            return error_response(
+                message="Invoice not generated yet. Submit your With GST or Without GST preference first.",
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+        if request.query_params.get("format") == "json":
+            return success_response(
+                data=InvoiceDetailSerializer(invoice).data,
+                message="Invoice details fetched successfully.",
+                status_code=status.HTTP_200_OK,
+            )
+
+        return self._build_pdf_response(invoice)

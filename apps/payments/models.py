@@ -145,3 +145,76 @@ class PaymentTransaction(models.Model):
 
     def __str__(self):
         return f"{self.transaction_number} - {self.order.order_number} ({self.status})"
+    
+class InvoiceConfiguration(models.Model):
+    """Admin-configurable GST and Non-GST invoice settings for SKM Electronics."""
+
+    company_name = models.CharField(max_length=255, default="SKM Electronics")
+    company_address = models.TextField(default="Perungudi, Chennai, Tamil Nadu - 600096")
+    company_state = models.CharField(max_length=100, default="Tamil Nadu")
+    company_state_code = models.CharField(max_length=2, default="33")  # 33 = Tamil Nadu
+    gstin = models.CharField(max_length=15, blank=True)
+
+    # Separate consecutive numbering series
+    gst_invoice_prefix = models.CharField(max_length=16, default="SKM/GST/26-27/")
+    gst_next_sequence = models.PositiveIntegerField(default=1)
+
+    non_gst_invoice_prefix = models.CharField(max_length=16, default="SKM/INV/26-27/")
+    non_gst_next_sequence = models.PositiveIntegerField(default=1)
+    non_gst_title = models.CharField(max_length=50, default="INVOICE")
+
+    terms_and_conditions = models.TextField(
+        default="Goods once sold will not be taken back.\nSubject to Chennai jurisdiction."
+    )
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="updated_invoice_configurations",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "payments_invoice_configuration"
+
+    def __str__(self):
+        return f"{self.company_name} Invoice Config"
+
+
+class Invoice(models.Model):
+    """Generated after payment verification based on customer's With/Without GST choice."""
+
+    order = models.OneToOneField(
+        Order,
+        on_delete=models.PROTECT,
+        related_name="invoice",
+    )
+    transaction = models.OneToOneField(
+        PaymentTransaction,
+        on_delete=models.PROTECT,
+        related_name="invoice",
+    )
+    invoice_number = models.CharField(max_length=32, unique=True, db_index=True)
+    is_gst = models.BooleanField(default=True)
+
+    # Optional buyer B2B details (captured post-payment if customer requests GST invoice)
+    buyer_gstin = models.CharField(max_length=15, blank=True)
+    buyer_company_name = models.CharField(max_length=255, blank=True)
+
+    # Frozen financial & tax split snapshot
+    subtotal_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    cgst_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    sgst_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    igst_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    total_tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+    grand_total = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"))
+
+    generated_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "payments_invoice"
+        ordering = ["-generated_at"]
+
+    def __str__(self):
+        return f"{self.invoice_number} ({self.order.order_number})"

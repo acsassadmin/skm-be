@@ -5,6 +5,8 @@ from payments.views import (
     SubmitPaymentProofView,
     PaymentTransactionView,
     AdminVerifyPaymentView,
+    InvoiceConfigurationView,
+    PaymentInvoiceView
 )
 
 urlpatterns = [
@@ -13,5 +15,7 @@ urlpatterns = [
     path("submit-proof/", SubmitPaymentProofView.as_view(), name="payment-submit-proof"),
     path("transactions/", PaymentTransactionView.as_view(), name="payment-transactions"),
     path("verify/", AdminVerifyPaymentView.as_view(), name="payment-verify"),
+    path("invoice-settings/", InvoiceConfigurationView.as_view(), name="payment-invoice-settings"),
+    path("invoices/<str:order_number>/", PaymentInvoiceView.as_view(), name="payment-invoice"),
     
 ]
