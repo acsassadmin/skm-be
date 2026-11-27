@@ -103,7 +103,8 @@ class ProductSerializer(serializers.ModelSerializer):
                     product=product,
                     image=img,
                     is_primary=(not has_primary and idx == 0),
-                    sort_order=idx,
+                    # sort_order=idx,
+                    display_order=idx,
                 )
                 for idx, img in enumerate(uploaded_images)
             ])
@@ -125,6 +126,7 @@ class ProductSerializer(serializers.ModelSerializer):
         uploaded_images = validated_data.pop("uploaded_images", [])
         uploaded_videos = validated_data.pop("uploaded_videos", [])
         video_urls = validated_data.pop("video_urls", [])
+        validated_data.pop("remove_thumbnail", None)
         validated_data.pop("delete_image_ids", None)
         validated_data.pop("delete_video_ids", None)
 
