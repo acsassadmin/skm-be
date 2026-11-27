@@ -2,6 +2,7 @@ from django.contrib.auth import authenticate, get_user_model
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 from .models import *
+from django.contrib.auth.password_validation import validate_password
 
 User = get_user_model()
 
@@ -113,7 +114,10 @@ class RegisterSerializer(serializers.ModelSerializer):
     #     user.roles.add(role_obj)
     #     return user
     def create(self, validated_data):
-        role_code = validated_data.pop("role_code", "CUSTOMER").upper()
+        # role_code = validated_data.pop("role_code", "CUSTOMER").upper()
+        role_val = validated_data.pop("role_code", "CUSTOMER")
+        # role_code = validated_data.pop("role_code", "CUSTOMER").upper()
+        role_code = (role_val.code if hasattr(role_val, "code") else str(role_val)).upper()
         company_name = validated_data.pop("company_name", "").strip()
         gstin = validated_data.pop("gstin", "").strip()
         address_line = validated_data.pop("address_line", "").strip()
@@ -224,4 +228,18 @@ class UserAddressSerializer(serializers.ModelSerializer):
         return cleaned
     
     
-    
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate(self, attrs):
+        if attrs["new_password"] != attrs["confirm_password"]:
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+        validate_password(attrs["new_password"])
+        return attrs
